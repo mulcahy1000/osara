@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#include <AppKit/NSSpeechSynthesizer.h>
 #include "osxa11y_wrapper.h"
 
 @interface OSXA11y : NSObject
@@ -6,6 +7,8 @@
 @end
 
 @implementation OSXA11y
+NSSpeechSynthesizer *tts = [[NSSpeechSynthesizer alloc] init];;
+
 namespace NSA11yWrapper {
   struct osxa11yImpl
   {
@@ -32,9 +35,16 @@ namespace NSA11yWrapper {
 }
 
 - (void)announce:(NSString*)message {
-  NSDictionary *announcementInfo = @{NSAccessibilityAnnouncementKey : message,
-				     NSAccessibilityPriorityKey : @(NSAccessibilityPriorityHigh)};
-
-  NSAccessibilityPostNotificationWithUserInfo([NSApp mainWindow], NSAccessibilityAnnouncementRequestedNotification, announcementInfo);
-}
+  if (tts)     {
+    if (    [tts isSpeaking]) {
+      [tts stopSpeaking];
+    }
+    [tts     startSpeakingString:message];
+  }
+  else {
+    NSDictionary *announcementInfo = @{NSAccessibilityAnnouncementKey : message,
+                                       NSAccessibilityPriorityKey : @(NSAccessibilityPriorityHigh)};
+    NSAccessibilityPostNotificationWithUserInfo([NSApp mainWindow], NSAccessibilityAnnouncementRequestedNotification, announcementInfo);
+  }
+  }
 @end
