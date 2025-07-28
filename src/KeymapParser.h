@@ -81,10 +81,15 @@ public:
     int getLineNumber() const { return lineNumber; }
     void setLineNumber(int line) { lineNumber = line; }
     
+    // Support for comments
+    virtual std::string getComment() const { return comment; }
+    virtual void setComment(const std::string& comment) { this->comment = comment; }
+
     bool operator==(const KeymapEntry& other) const;
 
 protected:
     int lineNumber = -1;
+    std::string comment; // Optional comment for the entry
 };
 
 // Key binding entry (KEY lines)
@@ -221,9 +226,6 @@ public:
     std::string getBehaviorDescription() const;
 };
 
-// Forward declaration for MergeOptions
-struct MergeOptions;
-
 // Main parser class with full modification support
 class KeymapParser {
 private:
@@ -297,7 +299,6 @@ public:
                           int newModifierValue, int newKeyNoteValue);
     
     // Bulk operations
-    void mergeFrom(const KeymapParser& other, const MergeOptions& options);
     void replaceEntriesOfType(EntryType type, const std::vector<std::unique_ptr<KeymapEntry>>& newEntries);
     
     // === WRITING ===
@@ -343,95 +344,6 @@ private:
     bool isValidContext(Context context) const;
     void updateActionCommandIdCounts();
     void validateUniqueIds();
-};
-
-// Enhanced merger with detailed control
-struct MergeOptions {
-    // What to preserve from user keymap
-    bool preserveUserCustomActions = true;
-    bool preserveUserKeyBindings = true;
-    bool preserveUserScripts = true;
-    bool preserveUserGlobalShortcuts = true;
-    
-    // Conflict resolution
-    bool reportConflicts = true;
-    bool autoResolveConflicts = false;
-    
-    // How to handle conflicts
-    enum class ConflictResolution {
-        PREFER_USER,        // Keep user's version
-        PREFER_OSARA,       // Use OSARA's version
-        RENAME_DUPLICATE,   // Rename conflicting entry
-        SKIP_DUPLICATE      // Skip the conflicting entry
-    } conflictResolution = ConflictResolution::PREFER_USER;
-    
-    // Context filtering
-    std::set<Context> includeContexts; // Empty = include all
-    std::set<Context> excludeContexts;
-    
-    // Entry type filtering
-    std::set<EntryType> includeTypes; // Empty = include all
-    std::set<EntryType> excludeTypes;
-    
-    // Custom filtering
-    std::function<bool(const KeymapEntry*)> customFilter;
-};
-
-struct ConflictInfo {
-    enum class ConflictType {
-        DUPLICATE_ACTION_COMMAND_ID,
-        DUPLICATE_KEY_BINDING,
-        DUPLICATE_GLOBAL_SHORTCUT,
-        INCOMPATIBLE_CONTEXTS
-    } type;
-    
-    std::string description;
-    KeymapEntry* userEntry = nullptr;
-    KeymapEntry* osaraEntry = nullptr;
-    std::string resolution;
-    bool resolved = false;
-};
-
-struct MergeResult {
-    KeymapParser mergedKeymap;
-    std::vector<ConflictInfo> conflicts;
-    std::vector<std::string> warnings;
-    std::vector<std::string> additions;
-    std::vector<std::string> removals;
-    bool success = false;
-    
-    // Statistics
-    int userEntriesPreserved = 0;
-    int osaraEntriesAdded = 0;
-    int conflictsResolved = 0;
-    int conflictsUnresolved = 0;
-};
-
-class KeymapMerger {
-public:
-    // Main merge function
-    static MergeResult merge(const KeymapParser& userKeymap, 
-                           const KeymapParser& osaraKeymap,
-                           const MergeOptions& options = MergeOptions{});
-    
-    // Conflict analysis (without merging)
-    static std::vector<ConflictInfo> analyzeConflicts(const KeymapParser& userKeymap,
-                                                     const KeymapParser& osaraKeymap);
-    
-    // Selective merging
-    static MergeResult mergeSpecificEntries(const KeymapParser& userKeymap,
-                                          const KeymapParser& osaraKeymap,
-                                          const std::vector<std::string>& entriesToMerge,
-                                          const MergeOptions& options = MergeOptions{});
-    
-private:
-    static void detectConflicts(const KeymapParser& userKeymap,
-                              const KeymapParser& osaraKeymap,
-                              std::vector<ConflictInfo>& conflicts);
-    static void resolveConflicts(std::vector<ConflictInfo>& conflicts,
-                               const MergeOptions& options);
-    static std::string generateUniqueActionCommandId(const std::string& baseId,
-                                                    const KeymapParser& keymap);
 };
 
 // Factory functions for creating entries

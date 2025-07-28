@@ -1,4 +1,4 @@
-#include "KeymapParser.h"
+    #include "KeymapParser.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -70,6 +70,12 @@ std::string KeyBinding::toString() const {
     }
     
     oss << " " << static_cast<int>(context);
+    
+    // Add comment if present
+    if (!comment.empty()) {
+        oss << "\t\t" << comment;
+    }
+    
     return oss.str();
 }
 
@@ -337,10 +343,32 @@ CustomAction::CustomAction(int flags, Context context, const std::string& action
 
 std::string CustomAction::toString() const {
     std::ostringstream oss;
-    oss << "ACT " << flags << " " << static_cast<int>(context) << " \"" << actionCommandId << "\" \"" << description << "\"";
+    
+    // Helper function to escape quotes in strings
+    auto escapeQuotes = [](const std::string& str) {
+        std::string escaped;
+        for (char c : str) {
+            if (c == '"') {
+                escaped += "\\\"";
+            } else if (c == '\\') {
+                escaped += "\\\\";
+            } else {
+                escaped += c;
+            }
+        }
+        return escaped;
+    };
+    
+    oss << "ACT " << flags << " " << static_cast<int>(context) 
+        << " \"" << escapeQuotes(actionCommandId) << "\" \"" << escapeQuotes(description) << "\"";
     
     for (const auto& command : commandSequence) {
         oss << " " << command;
+    }
+    
+    // Add comment if present
+    if (!comment.empty()) {
+        oss << "\t\t" << comment;
     }
     
     return oss.str();
@@ -369,6 +397,12 @@ std::string ScriptAction::toString() const {
     std::ostringstream oss;
     oss << "SCR " << static_cast<int>(behavior) << " " << static_cast<int>(context) 
         << " " << actionCommandId << " \"" << description << "\" " << scriptPath;
+    
+    // Add comment if present
+    if (!comment.empty()) {
+        oss << "\t\t" << comment;
+    }
+    
     return oss.str();
 }
 
@@ -437,7 +471,6 @@ bool KeymapParser::parseString(const std::string& content) {
         
         auto entry = parseLine(line, lineNumber);
         if (entry) {
-            entry->setLineNumber(lineNumber);
             entries.push_back(std::move(entry));
         }
     }
@@ -465,23 +498,47 @@ bool KeymapParser::parseString(const std::string& content) {
 }
 
 std::unique_ptr<KeymapEntry> KeymapParser::parseLine(const std::string& line, int lineNumber) {
-    auto tokens = tokenizeLine(line);
+    // Extract comment first (everything after #, including preceding whitespace)
+    std::string entryLine = line;
+    std::string comment;
+    
+    size_t commentPos = line.find('#');
+    if (commentPos != std::string::npos) {
+        // Find the start of whitespace before the #
+        size_t whitespaceStart = commentPos;
+        while (whitespaceStart > 0 && std::isspace(line[whitespaceStart - 1])) {
+            whitespaceStart--;
+        }
+        
+        entryLine = line.substr(0, whitespaceStart);
+        comment = line.substr(whitespaceStart);
+    }
+    
+    auto tokens = tokenizeLine(entryLine);
     if (tokens.empty()) {
         return nullptr;
     }
     
     const std::string& type = tokens[0];
+    std::unique_ptr<KeymapEntry> entry;
     
     if (type == "KEY") {
-        return parseKeyLine(line, lineNumber);
+        entry = parseKeyLine(entryLine, lineNumber);
     } else if (type == "ACT") {
-        return parseActLine(line, lineNumber);
+        entry = parseActLine(entryLine, lineNumber);
     } else if (type == "SCR") {
-        return parseScrLine(line, lineNumber);
+        entry = parseScrLine(entryLine, lineNumber);
     } else {
         addParseError(lineNumber, "Unknown entry type: " + type);
         return nullptr;
     }
+    
+    // Set comment if we found one and successfully parsed the entry
+    if (entry && !comment.empty()) {
+        entry->setComment(comment);
+    }
+    
+    return entry;
 }
 
 std::unique_ptr<KeyBinding> KeymapParser::parseKeyLine(const std::string& line, int lineNumber) {
@@ -577,11 +634,54 @@ std::unique_ptr<ScriptAction> KeymapParser::parseScrLine(const std::string& line
 
 std::vector<std::string> KeymapParser::tokenizeLine(const std::string& line) const {
     std::vector<std::string> tokens;
-    std::istringstream iss(line);
-    std::string token;
+    size_t pos = 0;
     
-    while (iss >> std::quoted(token)) {
-        tokens.push_back(token);
+    while (pos < line.length()) {
+        // Skip whitespace
+        while (pos < line.length() && std::isspace(line[pos])) {
+            pos++;
+        }
+        
+        if (pos >= line.length()) {
+            break;
+        }
+        
+        std::string token;
+        
+        if (line[pos] == '"') {
+            // Handle quoted string
+            pos++; // Skip opening quote
+            while (pos < line.length() && line[pos] != '"') {
+                if (line[pos] == '\\' && pos + 1 < line.length()) {
+                    // Handle escaped characters
+                    pos++; // Skip backslash
+                    switch (line[pos]) {
+                        case 'n': token += '\n'; break;
+                        case 't': token += '\t'; break;
+                        case 'r': token += '\r'; break;
+                        case '\\': token += '\\'; break;
+                        case '"': token += '"'; break;
+                        default: token += line[pos]; break;
+                    }
+                } else {
+                    token += line[pos];
+                }
+                pos++;
+            }
+            if (pos < line.length()) {
+                pos++; // Skip closing quote
+            }
+        } else {
+            // Handle unquoted token
+            while (pos < line.length() && !std::isspace(line[pos])) {
+                token += line[pos];
+                pos++;
+            }
+        }
+        
+        if (!token.empty()) {
+            tokens.push_back(token);
+        }
     }
     
     return tokens;
@@ -870,17 +970,6 @@ bool KeymapParser::replaceKeyBinding(const std::string& actionCommandId, Context
     return false;
 }
 
-void KeymapParser::mergeFrom(const KeymapParser& other, const MergeOptions& options) {
-    auto result = KeymapMerger::merge(*this, other, options);
-    if (result.success) {
-        // Clear current entries and move from result
-        clear();
-        entries = std::move(result.mergedKeymap.entries);
-        parseErrors = std::move(result.mergedKeymap.parseErrors);
-        actionCommandIdCounts = std::move(result.mergedKeymap.actionCommandIdCounts);
-        markAsModified();
-    }
-}
 
 void KeymapParser::replaceEntriesOfType(EntryType type, const std::vector<std::unique_ptr<KeymapEntry>>& newEntries) {
     removeEntriesByType(type);
@@ -1047,203 +1136,6 @@ void KeymapParser::validateUniqueIds() {
             uniqueIds.insert(id);
         }
     }
-}
-
-// ============================================================================
-// KeymapMerger Implementation
-// ============================================================================
-
-MergeResult KeymapMerger::merge(const KeymapParser& userKeymap, 
-                               const KeymapParser& osaraKeymap,
-                               const MergeOptions& options) {
-    MergeResult result;
-    
-    // Copy user keymap entries to merged keymap
-    for (const auto& entry : userKeymap.getEntries()) {
-        result.mergedKeymap.addEntry(KeymapUtils::cloneEntry(entry.get()));
-    }
-    result.userEntriesPreserved = static_cast<int>(userKeymap.getEntryCount());
-    
-    // Detect conflicts
-    detectConflicts(userKeymap, osaraKeymap, result.conflicts);
-    
-    // Resolve conflicts based on options
-    resolveConflicts(result.conflicts, options);
-    
-    // Add OSARA entries that don't conflict
-    for (const auto& entry : osaraKeymap.getEntries()) {
-        bool shouldAdd = true;
-        
-        // Check if this entry type should be included
-        if (!options.includeTypes.empty() && 
-            options.includeTypes.find(entry->getType()) == options.includeTypes.end()) {
-            shouldAdd = false;
-        }
-        
-        if (options.excludeTypes.find(entry->getType()) != options.excludeTypes.end()) {
-            shouldAdd = false;
-        }
-        
-        // Check if this context should be included
-        if (!options.includeContexts.empty() && 
-            options.includeContexts.find(entry->getContext()) == options.includeContexts.end()) {
-            shouldAdd = false;
-        }
-        
-        if (options.excludeContexts.find(entry->getContext()) != options.excludeContexts.end()) {
-            shouldAdd = false;
-        }
-        
-        // Apply custom filter
-        if (options.customFilter && !options.customFilter(entry.get())) {
-            shouldAdd = false;
-        }
-        
-        // Check for conflicts
-        bool hasConflict = false;
-        for (const auto& conflict : result.conflicts) {
-            if (conflict.osaraEntry == entry.get()) {
-                hasConflict = true;
-                if (conflict.resolved) {
-                    // Handle resolved conflict based on resolution
-                    // Implementation depends on resolution type
-                }
-                break;
-            }
-        }
-        
-        if (shouldAdd && !hasConflict) {
-            result.mergedKeymap.addEntry(KeymapUtils::cloneEntry(entry.get()));
-            result.additions.push_back(entry->getDescription());
-            result.osaraEntriesAdded++;
-        }
-    }
-    
-    result.success = true;
-    return result;
-}
-
-std::vector<ConflictInfo> KeymapMerger::analyzeConflicts(const KeymapParser& userKeymap,
-                                                        const KeymapParser& osaraKeymap) {
-    std::vector<ConflictInfo> conflicts;
-    detectConflicts(userKeymap, osaraKeymap, conflicts);
-    return conflicts;
-}
-
-MergeResult KeymapMerger::mergeSpecificEntries(const KeymapParser& userKeymap,
-                                              const KeymapParser& osaraKeymap,
-                                              const std::vector<std::string>& entriesToMerge,
-                                              const MergeOptions& /* options */) {
-    MergeResult result;
-    
-    // Copy user keymap entries to merged keymap
-    for (const auto& entry : userKeymap.getEntries()) {
-        result.mergedKeymap.addEntry(KeymapUtils::cloneEntry(entry.get()));
-    }
-    
-    for (const std::string& entryId : entriesToMerge) {
-        auto* entry = osaraKeymap.findEntryByActionCommandId(entryId);
-        if (entry) {
-            result.mergedKeymap.addEntry(KeymapUtils::cloneEntry(entry));
-            result.additions.push_back(entry->getDescription());
-            result.osaraEntriesAdded++;
-        }
-    }
-    
-    result.success = true;
-    return result;
-}
-
-void KeymapMerger::detectConflicts(const KeymapParser& userKeymap,
-                                  const KeymapParser& osaraKeymap,
-                                  std::vector<ConflictInfo>& conflicts) {
-    // Check for action command ID conflicts
-    for (const auto& osaraEntry : osaraKeymap.getEntries()) {
-        std::string actionId;
-        
-        if (auto* keyBinding = dynamic_cast<KeyBinding*>(osaraEntry.get())) {
-            actionId = keyBinding->getActionCommandId();
-        } else if (auto* customAction = dynamic_cast<CustomAction*>(osaraEntry.get())) {
-            actionId = customAction->getActionCommandId();
-        } else if (auto* scriptAction = dynamic_cast<ScriptAction*>(osaraEntry.get())) {
-            actionId = scriptAction->getActionCommandId();
-        }
-        
-        if (!actionId.empty()) {
-            auto* userEntry = userKeymap.findEntryByActionCommandId(actionId);
-            if (userEntry) {
-                ConflictInfo conflict;
-                conflict.type = ConflictInfo::ConflictType::DUPLICATE_ACTION_COMMAND_ID;
-                conflict.description = "Duplicate action command ID: " + actionId;
-                conflict.userEntry = userEntry;
-                conflict.osaraEntry = osaraEntry.get();
-                conflicts.push_back(conflict);
-            }
-        }
-    }
-    
-    // Check for key binding conflicts
-    auto userKeyBindings = userKeymap.getEntriesByType(EntryType::KEY_BINDING);
-    auto osaraKeyBindings = osaraKeymap.getEntriesByType(EntryType::KEY_BINDING);
-    
-    for (auto* osaraEntry : osaraKeyBindings) {
-        auto* osaraBinding = static_cast<KeyBinding*>(osaraEntry);
-        
-        for (auto* userEntry : userKeyBindings) {
-            auto* userBinding = static_cast<KeyBinding*>(userEntry);
-            
-            if (osaraBinding->hasSameKeyCombo(*userBinding) && 
-                osaraBinding->getContext() == userBinding->getContext()) {
-                
-                ConflictInfo conflict;
-                conflict.type = ConflictInfo::ConflictType::DUPLICATE_KEY_BINDING;
-                conflict.description = "Duplicate key binding: " + osaraBinding->getKeyComboString();
-                conflict.userEntry = userBinding;
-                conflict.osaraEntry = osaraBinding;
-                conflicts.push_back(conflict);
-            }
-        }
-    }
-}
-
-void KeymapMerger::resolveConflicts(std::vector<ConflictInfo>& conflicts,
-                                   const MergeOptions& options) {
-    for (auto& conflict : conflicts) {
-        switch (options.conflictResolution) {
-            case MergeOptions::ConflictResolution::PREFER_USER:
-                conflict.resolution = "Keeping user version";
-                conflict.resolved = true;
-                break;
-                
-            case MergeOptions::ConflictResolution::PREFER_OSARA:
-                conflict.resolution = "Using OSARA version";
-                conflict.resolved = true;
-                break;
-                
-            case MergeOptions::ConflictResolution::RENAME_DUPLICATE:
-                conflict.resolution = "Renaming duplicate entry";
-                conflict.resolved = true;
-                break;
-                
-            case MergeOptions::ConflictResolution::SKIP_DUPLICATE:
-                conflict.resolution = "Skipping duplicate entry";
-                conflict.resolved = true;
-                break;
-        }
-    }
-}
-
-std::string KeymapMerger::generateUniqueActionCommandId(const std::string& baseId,
-                                                       const KeymapParser& keymap) {
-    std::string uniqueId = baseId;
-    int counter = 1;
-    
-    while (keymap.findEntryByActionCommandId(uniqueId) != nullptr) {
-        uniqueId = baseId + "_" + std::to_string(counter);
-        ++counter;
-    }
-    
-    return uniqueId;
 }
 
 // ============================================================================
