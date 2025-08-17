@@ -45,6 +45,9 @@ void InstallerApp::ShowScreen(int dialogId)
         case IDD_WELCOME:
         dlgProc = WelcomeDlgProc;
         break;
+        case IDD_MODE_SELECTION:
+        dlgProc = ModeSelectionDlgProc;
+        break;
         case IDD_LICENSE:
         dlgProc = LicenseDlgProc;
         break;
@@ -53,6 +56,12 @@ void InstallerApp::ShowScreen(int dialogId)
         break;
         case IDD_KEYMAP:
         dlgProc = KeymapDlgProc;
+        break;
+        case IDD_UNINSTALL_CONFIRM:
+        dlgProc = UninstallConfirmDlgProc;
+        break;
+        case IDD_NO_OSARA_FOUND:
+        dlgProc = NoOSARAFoundDlgProc;
         break;
         case IDD_PROGRESS:
         dlgProc = ProgressDlgProc;
@@ -465,6 +474,188 @@ bool InstallerApp::InstallKeymap()
     }
     
     return true;
+}
+
+bool InstallerApp::PerformUninstallation()
+{
+    if (!m_progressCallback)
+    {
+        m_state.lastError = translate("Internal error: No progress callback set");
+        m_state.uninstallationSucceeded = false;
+        return false;
+    }
+    
+    try
+    {
+        m_progressCallback(0, translate("Preparing uninstallation..."));
+        
+        // Get the base path for uninstallation
+        std::string basePath;
+        if (m_state.installType == INSTALL_STANDARD)
+        {
+            basePath = GetDefaultInstallPath();
+        }
+        else
+        {
+            basePath = m_state.installPath;
+        }
+        
+        // OSARA detection already done in confirmation dialog, proceed with removal
+        m_progressCallback(10, translate("Preparing file removal..."));
+        
+        // Get list of files to remove
+        m_state.filesToRemove = GetInstalledFilesAt(basePath);
+        
+        // Remove OSARA files
+        m_progressCallback(30, translate("Removing OSARA files..."));
+        if (!RemoveOSARAFiles())
+        {
+            m_state.uninstallationSucceeded = false;
+            return false;
+        }
+        
+        m_progressCallback(100, translate("Uninstallation complete!"));
+        m_state.uninstallationSucceeded = true;
+        m_state.lastError = "";
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        m_state.lastError = std::string("Uninstallation failed with exception: ") + e.what();
+        m_state.uninstallationSucceeded = false;
+        return false;
+    }
+    catch (...)
+    {
+        m_state.lastError = "Uninstallation failed with unknown error";
+        m_state.uninstallationSucceeded = false;
+        return false;
+    }
+}
+
+bool InstallerApp::IsOSARAInstalledAt(const std::string& path)
+{
+    if (path.empty() || !DirectoryExists(path))
+        return false;
+    
+    // Check for OSARA plugin (required)
+    std::string pluginPath = path + PATH_SEPARATOR + "UserPlugins" + PATH_SEPARATOR + "reaper_osara.dylib";
+    struct stat statbuf;
+    if (stat(pluginPath.c_str(), &statbuf) != 0)
+        return false;
+    
+    return true; // Plugin exists, so OSARA is installed
+}
+
+std::vector<std::string> InstallerApp::GetInstalledFilesAt(const std::string& path)
+{
+    std::vector<std::string> files;
+    struct stat statbuf;
+    
+    // Check for plugin file
+    std::string pluginPath = path + PATH_SEPARATOR + "UserPlugins" + PATH_SEPARATOR + "reaper_osara.dylib";
+    if (stat(pluginPath.c_str(), &statbuf) == 0)
+    {
+        files.push_back(pluginPath);
+    }
+    
+    // Check for keymap file
+    std::string keymapPath = path + PATH_SEPARATOR + "KeyMaps" + PATH_SEPARATOR + "OSARA.ReaperKeyMap";
+    if (stat(keymapPath.c_str(), &statbuf) == 0)
+    {
+        files.push_back(keymapPath);
+    }
+    
+    // Check for locale files
+    std::string localePath = path + PATH_SEPARATOR + "osara" + PATH_SEPARATOR + "locale";
+    if (DirectoryExists(localePath))
+    {
+        std::vector<std::string> localeFiles = {
+            "de_DE.po", "es_ES.po", "es_MX.po", "fr_CA.po", "fr_FR.po",
+            "nb_NO.po", "pt_BR.po", "ru_RU.po", "tr_TR.po", "zh_CN.po", "zh_TW.po"
+        };
+        
+        for (const std::string& filename : localeFiles)
+        {
+            std::string filePath = localePath + PATH_SEPARATOR + filename;
+            if (stat(filePath.c_str(), &statbuf) == 0)
+            {
+                files.push_back(filePath);
+            }
+        }
+    }
+    
+    return files;
+}
+
+bool InstallerApp::RemoveOSARAFiles()
+{
+    std::string basePath;
+    if (m_state.installType == INSTALL_STANDARD)
+    {
+        basePath = GetDefaultInstallPath();
+    }
+    else
+    {
+        basePath = m_state.installPath;
+    }
+    
+    bool success = true;
+    std::string errors;
+    
+    // Remove plugin file
+    std::string pluginPath = basePath + PATH_SEPARATOR + "UserPlugins" + PATH_SEPARATOR + "reaper_osara.dylib";
+    if (remove(pluginPath.c_str()) != 0)
+    {
+        struct stat statbuf;
+        if (stat(pluginPath.c_str(), &statbuf) == 0) // File still exists
+        {
+            errors += "Failed to remove plugin: " + pluginPath + "; ";
+            success = false;
+        }
+    }
+    
+    // Remove keymap file
+    std::string keymapPath = basePath + PATH_SEPARATOR + "KeyMaps" + PATH_SEPARATOR + "OSARA.ReaperKeyMap";
+    if (remove(keymapPath.c_str()) != 0)
+    {
+        struct stat statbuf;
+        if (stat(keymapPath.c_str(), &statbuf) == 0) // File still exists
+        {
+            errors += "Failed to remove keymap: " + keymapPath + "; ";
+            // Don't fail uninstallation for keymap removal failure
+        }
+    }
+    
+    // Remove locale files
+    std::string localePath = basePath + PATH_SEPARATOR + "osara" + PATH_SEPARATOR + "locale";
+    if (DirectoryExists(localePath))
+    {
+        std::vector<std::string> localeFiles = {
+            "de_DE.po", "es_ES.po", "es_MX.po", "fr_CA.po", "fr_FR.po",
+            "nb_NO.po", "pt_BR.po", "ru_RU.po", "tr_TR.po", "zh_CN.po", "zh_TW.po"
+        };
+        
+        for (const std::string& filename : localeFiles)
+        {
+            std::string filePath = localePath + PATH_SEPARATOR + filename;
+            remove(filePath.c_str()); // Don't check result for locale files
+        }
+        
+        // Try to remove locale directory if empty
+        rmdir(localePath.c_str());
+        
+        // Try to remove osara directory if empty
+        std::string osaraPath = basePath + PATH_SEPARATOR + "osara";
+        rmdir(osaraPath.c_str());
+    }
+    
+    if (!success)
+    {
+        m_state.lastError = errors;
+    }
+    
+    return success;
 }
 
 bool InstallerApp::CreateDirectories()

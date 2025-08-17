@@ -3,16 +3,25 @@
 
 // Dialog IDs
 #define IDD_WELCOME         1000
-#define IDD_LICENSE         1001
-#define IDD_INSTALL_TYPE    1002
-#define IDD_KEYMAP          1003
-#define IDD_PROGRESS        1004
-#define IDD_COMPLETION      1005
+#define IDD_MODE_SELECTION  1001
+#define IDD_LICENSE         1002
+#define IDD_INSTALL_TYPE    1003
+#define IDD_KEYMAP          1004
+#define IDD_UNINSTALL_CONFIRM 1005
+#define IDD_NO_OSARA_FOUND  1006
+#define IDD_PROGRESS        1007
+#define IDD_COMPLETION      1008
 
 // Control IDs - Welcome Dialog
 #define IDC_WELCOME_TITLE   2000
 #define IDC_WELCOME_TEXT    2001
 #define IDC_CONTINUE        2002
+
+// Control IDs - Mode Selection Dialog
+#define IDC_MODE_INSTALL    2005
+#define IDC_MODE_UNINSTALL  2006
+#define IDC_MODE_TITLE      2007
+#define IDC_MODE_TEXT       2008
 
 // Control IDs - License Dialog
 #define IDC_LICENSE_TEXT    2010
@@ -38,6 +47,17 @@
 // Control IDs - Completion Dialog
 #define IDC_SUCCESS_TEXT    2050
 #define IDC_INSTALL_LOG     2051
+
+// Control IDs - Uninstall Confirmation Dialog
+#define IDC_UNINSTALL_TITLE     2055
+#define IDC_UNINSTALL_TEXT      2056
+#define IDC_UNINSTALL_FILE_LIST 2057
+#define IDC_CONFIRM_UNINSTALL   2058
+
+// Control IDs - No OSARA Found Dialog
+#define IDC_NO_OSARA_TITLE      2060
+#define IDC_NO_OSARA_TEXT       2061
+#define IDC_CLOSE               2062
 
 // Menu IDs
 #define IDR_MENU1           3000

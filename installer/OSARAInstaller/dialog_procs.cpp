@@ -68,7 +68,7 @@ INT_PTR CALLBACK WelcomeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 case IDC_CONTINUE:
                     if (g_installer)
                     {
-                        g_installer->ShowScreen(IDD_LICENSE);
+                        g_installer->ShowScreen(IDD_MODE_SELECTION);
                     }
                     return TRUE;
                     
@@ -94,6 +94,153 @@ INT_PTR CALLBACK WelcomeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 g_hwnd = NULL;
             } else {
                 printf("DEBUG: Dialog being destroyed is not current dialog\n");
+            }
+            return TRUE;
+    }
+    return FALSE;
+}
+
+// No OSARA Found Dialog Procedure
+INT_PTR CALLBACK NoOSARAFoundDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+        case WM_INITDIALOG:
+        {
+            g_hwnd = hwnd;
+            
+            // Localize dialog using main OSARA approach
+            translateDialog(hwnd);
+            
+            // Set focus to Back button
+            SetFocus(GetDlgItem(hwnd, IDC_BACK));
+            return FALSE; // We set focus manually
+        }
+        
+        case WM_COMMAND:
+            switch (LOWORD(wParam))
+            {
+                case IDC_BACK:
+                    if (g_installer)
+                    {
+                        // Go back to the Install Type dialog so user can try different location
+                        g_installer->ShowPreviousScreen();
+                    }
+                    return TRUE;
+                    
+                case IDCANCEL:
+                    // Close button from "No OSARA Found" dialog - terminate directly without confirmation
+#ifdef _WIN32
+                    PostQuitMessage(0);
+#else
+                    mac_terminate_app();
+#endif
+                    return TRUE;
+            }
+            break;
+            
+        case WM_DESTROY:
+            if (hwnd == g_hwnd) {
+                g_hwnd = NULL;
+            }
+            return TRUE;
+    }
+    return FALSE;
+}
+
+// Mode Selection Dialog Procedure
+INT_PTR CALLBACK ModeSelectionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+        case WM_INITDIALOG:
+        {
+            g_hwnd = hwnd;
+            
+            // Localize dialog using main OSARA approach
+            translateDialog(hwnd);
+            
+            // Set default to install mode
+            CheckDlgButton(hwnd, IDC_MODE_INSTALL, BST_CHECKED);
+            
+            // Always enable the Continue button - no detection logic
+            EnableWindow(GetDlgItem(hwnd, IDC_CONTINUE), TRUE);
+            
+            if (g_installer)
+            {
+                g_installer->GetState().operationMode = MODE_INSTALL;
+            }
+            
+            // Set focus to install radio button
+            SetFocus(GetDlgItem(hwnd, IDC_MODE_INSTALL));
+            return FALSE; // We set focus manually
+        }
+        
+        case WM_COMMAND:
+            switch (LOWORD(wParam))
+            {
+                case IDC_MODE_INSTALL:
+                    if (HIWORD(wParam) == BN_CLICKED && g_installer)
+                    {
+                        CheckDlgButton(hwnd, IDC_MODE_INSTALL, BST_CHECKED);
+                        CheckDlgButton(hwnd, IDC_MODE_UNINSTALL, BST_UNCHECKED);
+                        SetFocus(GetDlgItem(hwnd, IDC_MODE_INSTALL));
+                        g_installer->GetState().operationMode = MODE_INSTALL;
+                    }
+                    return TRUE;
+                    
+                case IDC_MODE_UNINSTALL:
+                    if (HIWORD(wParam) == BN_CLICKED && g_installer)
+                    {
+                        CheckDlgButton(hwnd, IDC_MODE_UNINSTALL, BST_CHECKED);
+                        CheckDlgButton(hwnd, IDC_MODE_INSTALL, BST_UNCHECKED);
+                        SetFocus(GetDlgItem(hwnd, IDC_MODE_UNINSTALL));
+                        g_installer->GetState().operationMode = MODE_UNINSTALL;
+                        printf("DEBUG: Uninstall mode selected, Continue button should be enabled\n");
+                        
+                        // Ensure Continue button is enabled
+                        EnableWindow(GetDlgItem(hwnd, IDC_CONTINUE), TRUE);
+                    }
+                    return TRUE;
+                    
+                case IDC_CONTINUE:
+                    if (g_installer)
+                    {
+                        if (g_installer->GetState().operationMode == MODE_INSTALL)
+                        {
+                            g_installer->ShowScreen(IDD_LICENSE);
+                        }
+                        else
+                        {
+                            // For uninstall, skip license and go to install type (location selection)
+                            g_installer->ShowScreen(IDD_INSTALL_TYPE);
+                        }
+                    }
+                    return TRUE;
+                    
+                case IDC_BACK:
+                    if (g_installer)
+                    {
+                        g_installer->ShowPreviousScreen();
+                    }
+                    return TRUE;
+                    
+                case IDCANCEL:
+                    if (ConfirmCancel(hwnd))
+                    {
+#ifdef _WIN32
+                        PostQuitMessage(0);
+#else
+                        mac_terminate_app();
+#endif
+                    }
+                    return TRUE;
+            }
+            break;
+            
+        case WM_DESTROY:
+            if (hwnd == g_hwnd) {
+                g_hwnd = NULL;
             }
             return TRUE;
     }
@@ -306,23 +453,62 @@ INT_PTR CALLBACK InstallTypeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 case IDC_CONTINUE:
                     if (g_installer)
                     {
-                        // Validate installation path
-                        if (g_installer->GetState().installType == INSTALL_PORTABLE)
+                        if (g_installer->GetState().operationMode == MODE_INSTALL)
                         {
-                            if (g_installer->GetState().installPath.empty())
+                            // Validate installation path for install mode
+                            if (g_installer->GetState().installType == INSTALL_PORTABLE)
                             {
-                                ShowError(hwnd, translate("Please specify a REAPER folder path for portable installation."));
-                                SetFocus(GetDlgItem(hwnd, IDC_PORTABLE_PATH));
-                                return TRUE;
+                                if (g_installer->GetState().installPath.empty())
+                                {
+                                    ShowError(hwnd, translate("Please specify a REAPER folder path for portable installation."));
+                                    SetFocus(GetDlgItem(hwnd, IDC_PORTABLE_PATH));
+                                    return TRUE;
+                                }
+                                if (!g_installer->ValidateInstallPath(g_installer->GetState().installPath))
+                                {
+                                    ShowError(hwnd, translate("The specified path does not appear to be a valid REAPER folder."));
+                                    SetFocus(GetDlgItem(hwnd, IDC_PORTABLE_PATH));
+                                    return TRUE;
+                                }
                             }
-                            if (!g_installer->ValidateInstallPath(g_installer->GetState().installPath))
+                            g_installer->ShowScreen(IDD_KEYMAP);
+                        }
+                        else
+                        {
+                            // For uninstall mode, validate portable path and check for OSARA installation
+                            if (g_installer->GetState().installType == INSTALL_PORTABLE)
                             {
-                                ShowError(hwnd, translate("The specified path does not appear to be a valid REAPER folder."));
-                                SetFocus(GetDlgItem(hwnd, IDC_PORTABLE_PATH));
-                                return TRUE;
+                                if (g_installer->GetState().installPath.empty())
+                                {
+                                    ShowError(hwnd, translate("Please specify a REAPER folder path for portable uninstallation."));
+                                    SetFocus(GetDlgItem(hwnd, IDC_PORTABLE_PATH));
+                                    return TRUE;
+                                }
+                            }
+                            
+                            // Check for OSARA installation BEFORE showing uninstall confirmation dialog
+                            std::string basePath;
+                            if (g_installer->GetState().installType == INSTALL_STANDARD)
+                            {
+                                basePath = g_installer->GetDefaultInstallPath();
+                            }
+                            else
+                            {
+                                basePath = g_installer->GetState().installPath;
+                            }
+                            
+                            // Check if OSARA is installed at this location
+                            if (!g_installer->IsOSARAInstalledAt(basePath))
+                            {
+                                // OSARA not found - show the "No OSARA Found" dialog directly
+                                g_installer->ShowScreen(IDD_NO_OSARA_FOUND);
+                            }
+                            else
+                            {
+                                // OSARA found - proceed to uninstall confirmation
+                                g_installer->ShowScreen(IDD_UNINSTALL_CONFIRM);
                             }
                         }
-                        g_installer->ShowScreen(IDD_KEYMAP);
                     }
                     return TRUE;
                     
@@ -448,6 +634,117 @@ INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     return FALSE;
 }
 
+// Uninstall Confirmation Dialog Procedure
+INT_PTR CALLBACK UninstallConfirmDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+        case WM_INITDIALOG:
+        {
+            // OSARA detection now happens in InstallTypeDlgProc before this dialog is shown
+            // So we can assume OSARA is installed and proceed with UI setup
+            g_hwnd = hwnd;
+            
+            // Localize dialog using main OSARA approach
+            translateDialog(hwnd);
+            
+            // Disable Continue button initially
+            EnableWindow(GetDlgItem(hwnd, IDC_CONTINUE), FALSE);
+            
+            if (g_installer)
+            {
+                // Get the base path for uninstallation (we know OSARA is installed here)
+                std::string basePath;
+                if (g_installer->GetState().installType == INSTALL_STANDARD)
+                {
+                    basePath = g_installer->GetDefaultInstallPath();
+                }
+                else
+                {
+                    basePath = g_installer->GetState().installPath;
+                }
+                
+                // Get list of files that will be removed
+                g_installer->GetState().filesToRemove = g_installer->GetInstalledFilesAt(basePath);
+                
+                // Build list of files to be removed
+                std::string fileList = translate("The following OSARA files will be removed:\n\n");
+                fileList += translate("Location: ") + basePath + "\n\n";
+                
+                fileList += translate("Files to be removed:\n");
+                for (const std::string& file : g_installer->GetState().filesToRemove)
+                {
+                    // Show relative path for readability
+                    std::string relativePath = file;
+                    if (relativePath.find(basePath) == 0)
+                    {
+                        relativePath = relativePath.substr(basePath.length());
+                        if (relativePath[0] == '/' || relativePath[0] == '\\')
+                        {
+                            relativePath = relativePath.substr(1);
+                        }
+                    }
+                    fileList += "- " + relativePath + "\n";
+                }
+                
+                fileList += "\n" + std::string(translate("Your keymap configuration (reaper-kb.ini) will NOT be modified."));
+                fileList += "\n\n" + std::string(translate("This action cannot be undone."));
+                
+                SetDlgItemText(hwnd, IDC_UNINSTALL_FILE_LIST, fileList.c_str());
+            }
+            
+            // Set focus to confirmation checkbox
+            SetFocus(GetDlgItem(hwnd, IDC_CONFIRM_UNINSTALL));
+            return FALSE; // We set focus manually
+        }
+        
+        case WM_COMMAND:
+            switch (LOWORD(wParam))
+            {
+                case IDC_CONFIRM_UNINSTALL:
+                    if (HIWORD(wParam) == BN_CLICKED)
+                    {
+                        bool checked = (IsDlgButtonChecked(hwnd, IDC_CONFIRM_UNINSTALL) == BST_CHECKED);
+                        EnableWindow(GetDlgItem(hwnd, IDC_CONTINUE), checked);
+                    }
+                    return TRUE;
+                    
+                case IDC_CONTINUE:
+                    if (g_installer && IsDlgButtonChecked(hwnd, IDC_CONFIRM_UNINSTALL) == BST_CHECKED)
+                    {
+                        g_installer->ShowScreen(IDD_PROGRESS);
+                    }
+                    return TRUE;
+                    
+                case IDC_BACK:
+                    if (g_installer)
+                    {
+                        g_installer->ShowPreviousScreen();
+                    }
+                    return TRUE;
+                    
+                case IDCANCEL:
+                    if (ConfirmCancel(hwnd))
+                    {
+#ifdef _WIN32
+                        PostQuitMessage(0);
+#else
+                        mac_terminate_app();
+#endif
+                    }
+                    return TRUE;
+            }
+            break;
+            
+        case WM_DESTROY:
+            if (hwnd == g_hwnd) {
+                g_hwnd = NULL;
+            }
+            return TRUE;
+    }
+    return FALSE;
+}
+
 // Progress callback function
 void ProgressCallback(int percent, const char* status)
 {
@@ -512,9 +809,24 @@ INT_PTR CALLBACK ProgressDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 KillTimer(hwnd, 1);
                 if (g_installer)
                 {
-                    bool success = g_installer->PerformInstallation();
-                    // Always show completion screen - it will display success or failure
-                    g_installer->ShowScreen(IDD_COMPLETION);
+                    bool success;
+                    if (g_installer->GetState().operationMode == MODE_INSTALL)
+                    {
+                        success = g_installer->PerformInstallation();
+                        // Always show completion screen for install - it will display success or failure
+                        g_installer->ShowScreen(IDD_COMPLETION);
+                    }
+                    else
+                    {
+                        success = g_installer->PerformUninstallation();
+                        // For uninstall, only show completion if successful
+                        // If unsuccessful, PerformUninstallation may have already shown error dialog
+                        if (success)
+                        {
+                            g_installer->ShowScreen(IDD_COMPLETION);
+                        }
+                        // If failed, the error dialog (like IDD_NO_OSARA_FOUND) was already shown
+                    }
                 }
             }
             return TRUE;
@@ -561,62 +873,127 @@ INT_PTR CALLBACK CompletionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             // Localize dialog using main OSARA approach
             translateDialog(hwnd);
             
-            // Display results based on installation success/failure
+            // Display results based on operation mode and success/failure
             if (g_installer)
             {
-                if (g_installer->GetState().installationSucceeded)
+                if (g_installer->GetState().operationMode == MODE_INSTALL)
                 {
-                    // Set success title and message
-                    SetWindowText(hwnd, translate("Installation Complete"));
-                    SetDlgItemText(hwnd, IDC_SUCCESS_TEXT, translate("OSARA has been successfully installed!"));
-                    
-                    std::string successMessage = std::string(translate("Installation completed successfully!")) + "\n\n";
-                    
-                    if (g_installer->GetState().installType == INSTALL_STANDARD)
+                    if (g_installer->GetState().installationSucceeded)
                     {
-                        successMessage += std::string(translate("OSARA has been installed to the standard REAPER location:")) + "\n";
-                        successMessage += g_installer->GetDefaultInstallPath() + "\n\n";
+                        // Set success title and message
+                        SetWindowText(hwnd, translate("Installation Complete"));
+                        SetDlgItemText(hwnd, IDC_SUCCESS_TEXT, translate("OSARA has been successfully installed!"));
+                        
+                        std::string successMessage = std::string(translate("Installation completed successfully!")) + "\n\n";
+                        
+                        if (g_installer->GetState().installType == INSTALL_STANDARD)
+                        {
+                            successMessage += std::string(translate("OSARA has been installed to the standard REAPER location:")) + "\n";
+                            successMessage += g_installer->GetDefaultInstallPath() + "\n\n";
+                        }
+                        else
+                        {
+                            successMessage += std::string(translate("OSARA has been installed to the portable REAPER location:")) + "\n";
+                            successMessage += g_installer->GetState().installPath + "\n\n";
+                        }
+                        
+                        successMessage += std::string(translate("Files installed:")) + "\n";
+                        successMessage += std::string(translate("- OSARA plugin (reaper_osara.dylib)")) + "\n";
+                        
+                        if (g_installer->GetState().keymapOption == KEYMAP_INSTALL)
+                        {
+                            successMessage += std::string(translate("- OSARA keymap configuration")) + "\n";
+                            if (!g_installer->GetState().keymapBackupPath.empty())
+                            {
+                                successMessage += std::string(translate("- Previous keymap backed up to: ")) + g_installer->GetState().keymapBackupPath + "\n";
+                            }
+                        }
+                        
+                        successMessage += "\n" + std::string(translate("You can now start REAPER to use OSARA's accessibility features."));
+                        
+                        SetDlgItemText(hwnd, IDC_INSTALL_LOG, successMessage.c_str());
                     }
                     else
                     {
-                        successMessage += std::string(translate("OSARA has been installed to the portable REAPER location:")) + "\n";
-                        successMessage += g_installer->GetState().installPath + "\n\n";
+                        // Set failure title and message
+                        SetWindowText(hwnd, translate("Installation Failed"));
+                        SetDlgItemText(hwnd, IDC_SUCCESS_TEXT, translate("Installation could not be completed."));
+                        
+                        std::string failureMessage = std::string(translate("Installation Failed")) + "\n\n";
+                        failureMessage += std::string(translate("The OSARA installation could not be completed.")) + "\n\n";
+                        failureMessage += std::string(translate("Error details:")) + "\n";
+                        failureMessage += g_installer->GetState().lastError;
+                        failureMessage += "\n\n" + std::string(translate("Please check the following:")) + "\n";
+                        failureMessage += std::string(translate("- You have write permissions to the installation directory")) + "\n";
+                        failureMessage += std::string(translate("- The selected path is a valid REAPER folder (for portable installation)")) + "\n";
+                        failureMessage += std::string(translate("- There is sufficient disk space")) + "\n";
+                        failureMessage += std::string(translate("- No antivirus software is blocking the installation")) + "\n\n";
+                        failureMessage += std::string(translate("You may try running the installer again or contact support for assistance."));
+                        
+                        SetDlgItemText(hwnd, IDC_INSTALL_LOG, failureMessage.c_str());
                     }
-                    
-                    successMessage += std::string(translate("Files installed:")) + "\n";
-                    successMessage += std::string(translate("- OSARA plugin (reaper_osara.dylib)")) + "\n";
-                    
-                    if (g_installer->GetState().keymapOption == KEYMAP_INSTALL)
-                    {
-                        successMessage += std::string(translate("- OSARA keymap configuration")) + "\n";
-                        if (!g_installer->GetState().keymapBackupPath.empty())
-                        {
-                            successMessage += std::string(translate("- Previous keymap backed up to: ")) + g_installer->GetState().keymapBackupPath + "\n";
-                        }
-                    }
-                    
-                    successMessage += "\n" + std::string(translate("You can now start REAPER to use OSARA's accessibility features."));
-                    
-                    SetDlgItemText(hwnd, IDC_INSTALL_LOG, successMessage.c_str());
                 }
-                else
+                else // MODE_UNINSTALL
                 {
-                    // Set failure title and message
-                    SetWindowText(hwnd, translate("Installation Failed"));
-                    SetDlgItemText(hwnd, IDC_SUCCESS_TEXT, translate("Installation could not be completed."));
-                    
-                    std::string failureMessage = std::string(translate("Installation Failed")) + "\n\n";
-                    failureMessage += std::string(translate("The OSARA installation could not be completed.")) + "\n\n";
-                    failureMessage += std::string(translate("Error details:")) + "\n";
-                    failureMessage += g_installer->GetState().lastError;
-                    failureMessage += "\n\n" + std::string(translate("Please check the following:")) + "\n";
-                    failureMessage += std::string(translate("- You have write permissions to the installation directory")) + "\n";
-                    failureMessage += std::string(translate("- The selected path is a valid REAPER folder (for portable installation)")) + "\n";
-                    failureMessage += std::string(translate("- There is sufficient disk space")) + "\n";
-                    failureMessage += std::string(translate("- No antivirus software is blocking the installation")) + "\n\n";
-                    failureMessage += std::string(translate("You may try running the installer again or contact support for assistance."));
-                    
-                    SetDlgItemText(hwnd, IDC_INSTALL_LOG, failureMessage.c_str());
+                    if (g_installer->GetState().uninstallationSucceeded)
+                    {
+                        // Set success title and message
+                        SetWindowText(hwnd, translate("Uninstallation Complete"));
+                        SetDlgItemText(hwnd, IDC_SUCCESS_TEXT, translate("OSARA has been successfully uninstalled!"));
+                        
+                        std::string successMessage = std::string(translate("Uninstallation completed successfully!")) + "\n\n";
+                        
+                        std::string uninstallPath;
+                        if (g_installer->GetState().installType == INSTALL_STANDARD)
+                        {
+                            uninstallPath = g_installer->GetDefaultInstallPath();
+                            successMessage += std::string(translate("OSARA has been removed from the standard REAPER location:")) + "\n";
+                        }
+                        else
+                        {
+                            uninstallPath = g_installer->GetState().installPath;
+                            successMessage += std::string(translate("OSARA has been removed from the portable REAPER location:")) + "\n";
+                        }
+                        successMessage += uninstallPath + "\n\n";
+                        
+                        successMessage += std::string(translate("Files removed:")) + "\n";
+                        for (const std::string& file : g_installer->GetState().filesToRemove)
+                        {
+                            std::string relativePath = file;
+                            if (relativePath.find(uninstallPath) == 0)
+                            {
+                                relativePath = relativePath.substr(uninstallPath.length());
+                                if (relativePath[0] == '/' || relativePath[0] == '\\')
+                                {
+                                    relativePath = relativePath.substr(1);
+                                }
+                            }
+                            successMessage += "- " + relativePath + "\n";
+                        }
+                        
+                        successMessage += "\n" + std::string(translate("Your keymap configuration (reaper-kb.ini) was preserved."));
+                        successMessage += "\n" + std::string(translate("OSARA has been completely removed from your system."));
+                        
+                        SetDlgItemText(hwnd, IDC_INSTALL_LOG, successMessage.c_str());
+                    }
+                    else
+                    {
+                        // Set failure title and message
+                        SetWindowText(hwnd, translate("Uninstallation Failed"));
+                        SetDlgItemText(hwnd, IDC_SUCCESS_TEXT, translate("Uninstallation could not be completed."));
+                        
+                        std::string failureMessage = std::string(translate("Uninstallation Failed")) + "\n\n";
+                        failureMessage += std::string(translate("The OSARA uninstallation could not be completed.")) + "\n\n";
+                        failureMessage += std::string(translate("Error details:")) + "\n";
+                        failureMessage += g_installer->GetState().lastError;
+                        failureMessage += "\n\n" + std::string(translate("Please check the following:")) + "\n";
+                        failureMessage += std::string(translate("- You have write permissions to the REAPER directory")) + "\n";
+                        failureMessage += std::string(translate("- REAPER is not currently running")) + "\n";
+                        failureMessage += std::string(translate("- No antivirus software is blocking file removal")) + "\n\n";
+                        failureMessage += std::string(translate("You may try running the uninstaller again or manually remove the remaining files."));
+                        
+                        SetDlgItemText(hwnd, IDC_INSTALL_LOG, failureMessage.c_str());
+                    }
                 }
             }
             else

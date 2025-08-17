@@ -16,6 +16,24 @@ BEGIN
     PUSHBUTTON "Cancel", IDCANCEL, 320, 270, 60, 20, WS_TABSTOP
 END
 
+// Mode Selection Dialog
+IDD_MODE_SELECTION DIALOG 0, 0, 400, 300
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Installation Mode"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT "Choose what you would like to do:", IDC_MODE_TITLE, 20, 20, 360, 20, SS_CENTER
+    LTEXT "Select whether you want to install or uninstall OSARA.", IDC_MODE_TEXT, 20, 50, 360, 20
+    GROUPBOX "Operation Mode", IDC_STATIC, 20, 80, 360, 120
+    CONTROL "Install OSARA", IDC_MODE_INSTALL, "Button", BS_AUTORADIOBUTTON | WS_GROUP, 30, 100, 150, 15
+    LTEXT "Install OSARA accessibility plugin for REAPER.", IDC_STATIC, 50, 120, 320, 15
+    CONTROL "Uninstall OSARA", IDC_MODE_UNINSTALL, "Button", BS_AUTORADIOBUTTON, 30, 150, 150, 15
+    LTEXT "Remove OSARA from your REAPER installation.", IDC_STATIC, 50, 170, 320, 15
+    DEFPUSHBUTTON "Continue", IDC_CONTINUE, 250, 270, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Back", IDC_BACK, 180, 270, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 320, 270, 60, 20, WS_TABSTOP
+END
+
 // License Dialog
 IDD_LICENSE DIALOG 0, 0, 400, 300
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
@@ -69,6 +87,33 @@ BEGIN
     DEFPUSHBUTTON "Continue", IDC_CONTINUE, 250, 270, 60, 20, WS_TABSTOP
     PUSHBUTTON "Back", IDC_BACK, 180, 270, 60, 20, WS_TABSTOP
     PUSHBUTTON "Cancel", IDCANCEL, 320, 270, 60, 20, WS_TABSTOP
+END
+
+// Uninstall Confirmation Dialog
+IDD_UNINSTALL_CONFIRM DIALOG 0, 0, 400, 350
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Confirm Uninstallation"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT "Uninstall Confirmation", IDC_UNINSTALL_TITLE, 20, 20, 360, 20, SS_CENTER
+    LTEXT "Please review the files that will be removed:", IDC_UNINSTALL_TEXT, 20, 50, 360, 15
+    EDITTEXT IDC_UNINSTALL_FILE_LIST, 20, 70, 360, 180, ES_MULTILINE | ES_READONLY | WS_VSCROLL | WS_TABSTOP
+    CONTROL "I understand that this will remove OSARA from REAPER", IDC_CONFIRM_UNINSTALL, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 20, 260, 300, 15
+    DEFPUSHBUTTON "Uninstall", IDC_CONTINUE, 250, 320, 60, 20, WS_DISABLED | WS_TABSTOP
+    PUSHBUTTON "Back", IDC_BACK, 180, 320, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 320, 320, 60, 20, WS_TABSTOP
+END
+
+// No OSARA Found Dialog
+IDD_NO_OSARA_FOUND DIALOG 0, 0, 400, 200
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "OSARA Not Found"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT "OSARA Not Found", IDC_NO_OSARA_TITLE, 20, 20, 360, 20, SS_CENTER
+    LTEXT "OSARA was not found at the specified location.\n\nNo OSARA files were detected in the selected REAPER directory. This could mean:\n\n• OSARA is not installed at this location\n• The selected directory is not a valid REAPER installation\n• OSARA was installed to a different location\n\nPlease verify the installation path and try again, or use the portable installation option to specify the correct REAPER directory.", IDC_NO_OSARA_TEXT, 20, 50, 360, 100
+    DEFPUSHBUTTON "Back", IDC_BACK, 250, 170, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Close", IDCANCEL, 320, 170, 60, 20, WS_TABSTOP
 END
 
 // Progress Dialog

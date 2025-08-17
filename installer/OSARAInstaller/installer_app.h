@@ -11,6 +11,13 @@
 #include <string>
 #include <vector>
 
+// Operation modes
+enum OperationMode
+{
+    MODE_INSTALL,
+    MODE_UNINSTALL
+};
+
 // Installation types
 enum InstallationType
 {
@@ -28,20 +35,25 @@ enum KeymapOption
 // Installation state
 struct InstallationState
 {
+    OperationMode operationMode;
     InstallationType installType;
     KeymapOption keymapOption;
     std::string installPath;
     std::string reaperPath;
     bool licenseAccepted;
     bool installationSucceeded;
+    bool uninstallationSucceeded;
     std::string lastError;
     std::string keymapBackupPath;
+    std::vector<std::string> filesToRemove;
     
     InstallationState() 
-        : installType(INSTALL_STANDARD)
+        : operationMode(MODE_INSTALL)
+        , installType(INSTALL_STANDARD)
         , keymapOption(KEYMAP_KEEP)
         , licenseAccepted(false)
         , installationSucceeded(false)
+        , uninstallationSucceeded(false)
     {
     }
 };
@@ -65,6 +77,7 @@ public:
     
     // Installation process
     bool PerformInstallation();
+    bool PerformUninstallation();
     void SetProgressCallback(void (*callback)(int percent, const char* status));
     
     // Utility functions
@@ -72,6 +85,11 @@ public:
     std::string LoadLicenseText();
     bool IsReaperInstalled();
     std::string FindReaperPath();
+    
+    // Uninstall functions
+    bool IsOSARAInstalledAt(const std::string& path);
+    std::vector<std::string> GetInstalledFilesAt(const std::string& path);
+    bool RemoveOSARAFiles();
     
 private:
     InstallationState m_state;
@@ -100,9 +118,12 @@ extern InstallerApp* g_installer;
 
 // Dialog procedures (defined in dialog_procs.cpp)
 INT_PTR CALLBACK WelcomeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+INT_PTR CALLBACK ModeSelectionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK LicenseDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK InstallTypeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+INT_PTR CALLBACK UninstallConfirmDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+INT_PTR CALLBACK NoOSARAFoundDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK ProgressDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK CompletionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
