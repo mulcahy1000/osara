@@ -5,8 +5,8 @@ on:
     workflows: [build]
     types: [completed]   
 env:
-  runUrl: https://github.com/jcsteh/osara/actions/runs/${{ github.event.workflow_run.id }}
-  nightlyUrl: https://nightly.link/jcsteh/osara/actions/artifacts
+  runUrl: https://github.com/mulcahy1000/osara/actions/runs/${{ github.event.workflow_run.id }}
+  nightlyUrl: https://nightly.link/mulcahy1000/osara/actions/artifacts
 jobs:
   success:
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
