@@ -10,7 +10,7 @@ defaults:
   run:
     shell: bash
 env:
-  publisher: James Teh
+  publisher: Marc Mulcahy
   VSCMD_SKIP_SENDTELEMETRY: 1
   SCONS_CACHE_MSVC_CONFIG: 1
 concurrency:
@@ -22,7 +22,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: set env
