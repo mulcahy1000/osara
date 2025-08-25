@@ -235,8 +235,7 @@ jobs:
 
           # Create final signed and notarized zip with app bundle and license
           rm -f ../osara_${{ env.version }}.zip
-          zip -r ../osara_${{ env.version }}.zip $APP_BUNDLE ../../copying.txt
-          zip -r ../osara_${{ env.version }}.zip -j ../../copying.txt
+          zip -r ../osara_${{ env.version }}.zip $APP_BUNDLE
           cd ../..
 
           # Cleanup
@@ -290,8 +289,6 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
     permissions:
       pages: write
       id-token: write
