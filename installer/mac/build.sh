@@ -42,6 +42,7 @@ EOF
 
 # Copy resources into the app bundle
 cp ../../build/reaper_osara.dylib "$app_name/Contents/Resources/"
+cp ../../copying.txt "$app_name/Contents/Resources/"
 cp ../../config/mac/reaper-kb.ini "$app_name/Contents/Resources/OSARA.ReaperKeyMap"
 mkdir -p "$app_name/Contents/Resources/locale"
 cp ../../locale/*.po "$app_name/Contents/Resources/locale/"
@@ -49,6 +50,5 @@ cp ../../locale/*.po "$app_name/Contents/Resources/locale/"
 # Create the final zip file with the app bundle and license
 rm -f $zip_file
 zip -r $zip_file "$app_name"
-zip -j $zip_file ../../copying.txt
 
 echo "Created installer package: $zip_file"
