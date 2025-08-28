@@ -26,7 +26,7 @@ msgstr ""
 	for s in source:
 		filePath = s.path
 		inp = open(filePath, "rt", encoding="UTF-8")
-		if filePath.endswith(".cpp"):
+		if filePath.endswith(".cpp") or filePath.endswith(".mm"):
 			addCpp(inp)
 		elif filePath.endswith(".rc"):
 			addRc(inp)
