@@ -242,8 +242,8 @@ jobs:
           fi
 
           # Create final signed and notarized zip with app bundle
-          rm -f ../osara_${{ env.version }}.zip
-          zip -r ../osara_${{ env.version }}.zip $APP_BUNDLE
+          rm -f ../../installer/osara_${{ env.version }}.zip
+          zip -r ../../installer/osara_${{ env.version }}.zip $APP_BUNDLE
           cd ../..
 
           # Cleanup
