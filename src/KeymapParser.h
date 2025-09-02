@@ -70,53 +70,40 @@ enum class ScriptBehavior {
 class KeymapEntry {
 public:
     virtual ~KeymapEntry() = default;
+    virtual std::string getUniqueId() const = 0;
     virtual EntryType getType() const = 0;
     virtual std::string toString() const = 0;
     virtual std::string getDescription() const = 0;
     virtual Context getContext() const = 0;
-    virtual bool isConflictWith(const KeymapEntry& other) const = 0;
-    virtual std::string getUniqueId() const = 0;
-    
-    // Line number in original file (for error reporting)
-    int getLineNumber() const { return lineNumber; }
-    void setLineNumber(int line) { lineNumber = line; }
-    
-    // Support for comments
-    virtual std::string getComment() const { return comment; }
-    virtual void setComment(const std::string& comment) { this->comment = comment; }
+    int getLineNumber() const { return m_lineNumber; }
+    void setLineNumber(int line) { m_lineNumber = line; }
+    virtual std::string getComment() const { return m_comment; }
+    virtual void setComment(const std::string& comment) { this->m_comment = comment; }
 
     bool operator==(const KeymapEntry& other) const;
 
 protected:
-    int lineNumber = -1;
-    std::string comment; // Optional comment for the entry
+    int m_lineNumber = -1;
+    std::string m_comment; // Optional comment for the entry
 };
 
 // Key binding entry (KEY lines)
 class KeyBinding : public KeymapEntry {
-private:
-    int modifierValue;
-    int keyNoteValue;
-    std::string actionCommandId;
-    Context context;
-    KeyType keyType;
-    
 public:
     KeyBinding(int modifierValue, int keyNoteValue, const std::string& actionCommandId, 
                Context context);
     
+    std::string getUniqueId() const override;
     EntryType getType() const override { return EntryType::KEY_BINDING; }
     std::string toString() const override;
     std::string getDescription() const override;
-    Context getContext() const override { return context; }
-    bool isConflictWith(const KeymapEntry& other) const override;
-    std::string getUniqueId() const override;
+    Context getContext() const override { return m_context; }
     
     // Getters
-    int getModifierValue() const { return modifierValue; }
-    int getKeyNoteValue() const { return keyNoteValue; }
-    const std::string& getActionCommandId() const { return actionCommandId; }
-    KeyType getKeyType() const { return keyType; }
+    int getModifierValue() const { return m_modifierValue; }
+    int getKeyNoteValue() const { return m_keyNoteValue; }
+    const std::string& getActionCommandId() const { return m_actionCommandId; }
+    KeyType getKeyType() const { return m_keyType; }
     
     // Key combination description
     std::string getKeyComboString() const;
@@ -136,109 +123,104 @@ private:
     std::string formatMidiKey() const;
     std::string formatMediaKey() const;
     std::string formatRegularKey() const;
+
+    int m_modifierValue;
+    int m_keyNoteValue;
+    std::string m_actionCommandId;
+    Context m_context;
+    KeyType m_keyType;
+    
 };
 
 // Global key binding (special dual-entry format)
 class GlobalKeyBinding : public KeymapEntry {
-private:
-    std::unique_ptr<KeyBinding> actionBinding;
-    std::unique_ptr<KeyBinding> scopeBinding;
-    GlobalKeyScope scope;
-    
 public:
     GlobalKeyBinding(std::unique_ptr<KeyBinding> actionBinding,
                     std::unique_ptr<KeyBinding> scopeBinding,
                     GlobalKeyScope scope);
-    
+
+    std::string getUniqueId() const override;
     EntryType getType() const override { return EntryType::GLOBAL_KEY_BINDING; }
     std::string toString() const override;
     std::string getDescription() const override;
     Context getContext() const override;
-    bool isConflictWith(const KeymapEntry& other) const override;
-    std::string getUniqueId() const override;
-    
+
     // Getters
-    const KeyBinding* getActionBinding() const { return actionBinding.get(); }
-    const KeyBinding* getScopeBinding() const { return scopeBinding.get(); }
-    GlobalKeyScope getScope() const { return scope; }
+    const KeyBinding* getActionBinding() const { return m_actionBinding.get(); }
+    const KeyBinding* getScopeBinding() const { return m_scopeBinding.get(); }
+    GlobalKeyScope getScope() const { return m_scope; }
     std::string getKeyComboString() const;
+
+private:
+    std::unique_ptr<KeyBinding> m_actionBinding;
+    std::unique_ptr<KeyBinding> m_scopeBinding;
+    GlobalKeyScope m_scope;
 };
 
 // Custom action entry (ACT lines)
 class CustomAction : public KeymapEntry {
-private:
-    int flags;
-    Context context;
-    std::string actionCommandId;
-    std::string description;
-    std::vector<std::string> commandSequence;
-    
 public:
     CustomAction(int flags, Context context, const std::string& actionCommandId,
                 const std::string& description, const std::vector<std::string>& commands);
-    
+
+    std::string getUniqueId() const override { return m_actionCommandId; }
     EntryType getType() const override { return EntryType::CUSTOM_ACTION; }
     std::string toString() const override;
-    std::string getDescription() const override { return description; }
-    Context getContext() const override { return context; }
-    bool isConflictWith(const KeymapEntry& other) const override;
-    std::string getUniqueId() const override { return actionCommandId; }
-    
+    std::string getDescription() const override { return m_description; }
+    Context getContext() const override { return m_context; }
+
     // Getters
-    const std::string& getActionCommandId() const { return actionCommandId; }
-    const std::vector<std::string>& getCommandSequence() const { return commandSequence; }
-    int getFlags() const { return flags; }
-    
+    const std::string& getActionCommandId() const { return m_actionCommandId; }
+    const std::vector<std::string>& getCommandSequence() const { return m_commandSequence; }
+    int getFlags() const { return m_flags; }
+
     // Flag interpretation
-    bool consolidatesUndoPoints() const { return flags & 1; }
-    bool showsInActionsMenu() const { return flags & 2; }
-    bool showsAsActiveIfAllComponentsActive() const { return (flags & 16) || (flags & 32); }
+    bool consolidatesUndoPoints() const { return m_flags & 1; }
+    bool showsInActionsMenu() const { return m_flags & 2; }
+    bool showsAsActiveIfAllComponentsActive() const { return (flags & 16) || (m_flags & 32); }
+
+private:
+    int m_flags;
+    Context m_context;
+    std::string m_actionCommandId;
+    std::string m_description;
+    std::vector<std::string> m_commandSequence;
 };
 
 // Script action entry (SCR lines)
 class ScriptAction : public KeymapEntry {
-private:
-    ScriptBehavior behavior;
-    Context context;
-    std::string actionCommandId;
-    std::string description;
-    std::string scriptPath;
-    
 public:
     ScriptAction(ScriptBehavior behavior, Context context, const std::string& actionCommandId,
                 const std::string& description, const std::string& scriptPath);
-    
+
+    std::string getUniqueId() const override { return m_actionCommandId; }
     EntryType getType() const override { return EntryType::SCRIPT_ACTION; }
     std::string toString() const override;
-    std::string getDescription() const override { return description; }
-    Context getContext() const override { return context; }
-    bool isConflictWith(const KeymapEntry& other) const override;
-    std::string getUniqueId() const override { return actionCommandId; }
-    
+    std::string getDescription() const override { return m_description; }
+    Context getContext() const override { return m_context; }
+
     // Getters
-    const std::string& getActionCommandId() const { return actionCommandId; }
-    const std::string& getScriptPath() const { return scriptPath; }
-    ScriptBehavior getBehavior() const { return behavior; }
-    
+    const std::string& getActionCommandId() const { return m_actionCommandId; }
+    const std::string& getScriptPath() const { return m_scriptPath; }
+    ScriptBehavior getBehavior() const { return m_behavior; }
+
     // Behavior interpretation
     bool consolidatesUndoPoints() const;
     bool showsInActionsMenu() const;
     std::string getBehaviorDescription() const;
+
+private:
+    ScriptBehavior m_behavior;
+    Context m_context;
+    std::string m_actionCommandId;
+    std::string m_description;
+    std::string m_scriptPath;
 };
 
 // Main parser class with full modification support
 class KeymapParser {
-private:
-    std::vector<std::unique_ptr<KeymapEntry>> entries;
-    std::map<int, std::string> parseErrors;
-    std::map<std::string, int> actionCommandIdCounts;
-    bool modified = false;
-    
 public:
-    // Default constructor
     KeymapParser() = default;
-    
-    // Move constructor
     KeymapParser(KeymapParser&& other) noexcept
         : entries(std::move(other.entries))
         , parseErrors(std::move(other.parseErrors))
@@ -246,8 +228,6 @@ public:
         , modified(other.modified) {
         other.modified = false;
     }
-    
-    // Move assignment operator
     KeymapParser& operator=(KeymapParser&& other) noexcept {
         if (this != &other) {
             entries = std::move(other.entries);
@@ -258,25 +238,18 @@ public:
         }
         return *this;
     }
-    
-    // Delete copy constructor and copy assignment operator
     KeymapParser(const KeymapParser&) = delete;
     KeymapParser& operator=(const KeymapParser&) = delete;
-    
-    // === PARSING ===
+
     bool parseFile(const std::string& filePath);
     bool parseString(const std::string& content);
-    
-    // === READING/QUERYING ===
-    const std::vector<std::unique_ptr<KeymapEntry>>& getEntries() const { return entries; }
+
+    const std::vector<std::unique_ptr<KeymapEntry>>& getEntries() const { return m_entries; }
     std::vector<KeymapEntry*> getEntriesByType(EntryType type) const;
     std::vector<KeymapEntry*> getEntriesByContext(Context context) const;
     KeymapEntry* findEntryByActionCommandId(const std::string& id) const;
     std::vector<KeyBinding*> findKeyBindingsForAction(const std::string& actionId) const;
-    std::vector<KeyBinding*> findConflictingKeyBindings() const;
-    
-    // === MODIFICATION ===
-    // Add entries
+
     void addEntry(std::unique_ptr<KeymapEntry> entry);
     void addKeyBinding(int modifierValue, int keyNoteValue, 
                       const std::string& actionCommandId, Context context);
@@ -285,65 +258,59 @@ public:
     void addScriptAction(ScriptBehavior behavior, Context context, 
                         const std::string& actionCommandId, const std::string& description,
                         const std::string& scriptPath);
-    
-    // Remove entries
+
     bool removeEntry(const std::string& uniqueId);
     bool removeEntryByIndex(size_t index);
     size_t removeEntriesByType(EntryType type);
     size_t removeEntriesByContext(Context context);
     size_t removeEntriesMatching(std::function<bool(const KeymapEntry*)> predicate);
-    
-    // Update entries
+
     bool updateEntry(const std::string& uniqueId, std::unique_ptr<KeymapEntry> newEntry);
     bool replaceKeyBinding(const std::string& actionCommandId, Context context,
                           int newModifierValue, int newKeyNoteValue);
-    
-    // Bulk operations
+
     void replaceEntriesOfType(EntryType type, const std::vector<std::unique_ptr<KeymapEntry>>& newEntries);
-    
-    // === WRITING ===
+
     bool writeToFile(const std::string& filePath) const;
     std::string toString() const;
-    
-    // === STATE MANAGEMENT ===
-    bool isModified() const { return modified; }
-    void markAsModified() { modified = true; }
-    void markAsClean() { modified = false; }
+
+    bool isModified() const { return m_modified; }
+    void markAsModified() { m_modified = true; }
+    void markAsClean() { m_modified = false; }
     void clear();
-    
-    // === VALIDATION ===
-    const std::map<int, std::string>& getParseErrors() const { return parseErrors; }
-    bool hasErrors() const { return !parseErrors.empty(); }
+
+    const std::map<int, std::string>& getParseErrors() const { return m_parseErrors; }
+    bool hasErrors() const { return !m_parseErrors.empty(); }
     std::vector<std::string> validateEntries() const;
-    
-    // === STATISTICS ===
-    size_t getEntryCount() const { return entries.size(); }
+
+    size_t getEntryCount() const { return m_entries.size(); }
     std::map<EntryType, int> getEntryCountsByType() const;
     std::map<Context, int> getEntryCountsByContext() const;
-    
+
 private:
-    // Internal parsing methods
     std::unique_ptr<KeymapEntry> parseLine(const std::string& line, int lineNumber);
     std::unique_ptr<KeyBinding> parseKeyLine(const std::string& line, int lineNumber);
     std::unique_ptr<CustomAction> parseActLine(const std::string& line, int lineNumber);
     std::unique_ptr<ScriptAction> parseScrLine(const std::string& line, int lineNumber);
-    
-    // Global shortcut detection and parsing
+
     bool isGlobalShortcutPair(size_t index) const;
     std::unique_ptr<GlobalKeyBinding> parseGlobalShortcut(size_t& index);
-    
-    // Helper methods
+
     Context parseContext(int contextValue) const;
     std::string contextToString(Context context) const;
     std::vector<std::string> tokenizeLine(const std::string& line) const;
     std::string parseQuotedString(const std::string& input, size_t& pos) const;
     void addParseError(int lineNumber, const std::string& error);
-    
-    // Validation helpers
+
     bool isValidActionCommandId(const std::string& id) const;
     bool isValidContext(Context context) const;
     void updateActionCommandIdCounts();
     void validateUniqueIds();
+
+    std::vector<std::unique_ptr<KeymapEntry>> m_entries;
+    std::map<int, std::string> m_parseErrors;
+    std::map<std::string, int> m_actionCommandIdCounts;
+    bool m_modified = false;
 };
 
 // Factory functions for creating entries
@@ -351,17 +318,14 @@ namespace EntryFactory {
     std::unique_ptr<KeyBinding> createKeyBinding(int modifierValue, int keyNoteValue,
                                                 const std::string& actionCommandId,
                                                 Context context);
-    
     std::unique_ptr<CustomAction> createCustomAction(int flags, Context context,
                                                     const std::string& actionCommandId,
                                                     const std::string& description,
                                                     const std::vector<std::string>& commands);
-    
     std::unique_ptr<ScriptAction> createScriptAction(ScriptBehavior behavior, Context context,
                                                     const std::string& actionCommandId,
                                                     const std::string& description,
                                                     const std::string& scriptPath);
-    
     std::unique_ptr<GlobalKeyBinding> createGlobalKeyBinding(int modifierValue, int keyNoteValue,
                                                            const std::string& actionCommandId,
                                                            Context context, GlobalKeyScope scope);
@@ -372,22 +336,17 @@ namespace KeymapUtils {
     // File operations
     bool isValidKeymapFile(const std::string& filePath);
     bool backupFile(const std::string& filePath, const std::string& backupSuffix = ".backup");
-    
-    // Entry manipulation
+
     std::unique_ptr<KeymapEntry> cloneEntry(const KeymapEntry* entry);
-    bool areEntriesEquivalent(const KeymapEntry* entry1, const KeymapEntry* entry2);
-    
-    // Key encoding/decoding
+
     std::string decodeKeyCombo(int modifierValue, int keyNoteValue);
     std::pair<int, int> encodeKeyCombo(const std::string& keyCombo);
     bool isValidKeyCombo(int modifierValue, int keyNoteValue);
-    
-    // Context utilities
+
     std::string contextToDisplayName(Context context);
     Context displayNameToContext(const std::string& name);
     std::vector<Context> getAllValidContexts();
-    
-    // Validation
+
     bool isValidActionCommandId(const std::string& id);
     bool isValidScriptPath(const std::string& path);
     std::vector<std::string> validateKeymap(const KeymapParser& keymap);
