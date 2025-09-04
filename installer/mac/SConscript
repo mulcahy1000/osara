@@ -389,7 +389,8 @@ installerSources = [
     "#installer/OSARAInstaller/installer_app.cpp",
     "#installer/OSARAInstaller/dialog_procs.cpp",
     "#installer/OSARAInstaller/dialog_procs_mac.mm",
-    "#installer/OSARAInstaller/translation.cpp"
+    "#installer/OSARAInstaller/translation.cpp",
+    "#installer/OSARAInstaller/KeymapParser.cpp"
 ]
 
 installerObjects = []
