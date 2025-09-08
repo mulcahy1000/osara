@@ -59,7 +59,7 @@ enum class GlobalKeyScope {
     GLOBAL_TEXTFIELDS = 101
 };
 
-// Script behavior flags
+// Script behavior g
 enum class ScriptBehavior {
     SHOW_DIALOG = 4,           // Show instance dialog (default)
     TERMINATE_ALL = 260,       // Always terminate all instances
@@ -177,7 +177,7 @@ public:
     // Flag interpretation
     bool consolidatesUndoPoints() const { return m_flags & 1; }
     bool showsInActionsMenu() const { return m_flags & 2; }
-    bool showsAsActiveIfAllComponentsActive() const { return (flags & 16) || (m_flags & 32); }
+    bool showsAsActiveIfAllComponentsActive() const { return (m_flags & 16) || (m_flags & 32); }
 
 private:
     int m_flags;
@@ -222,19 +222,19 @@ class KeymapParser {
 public:
     KeymapParser() = default;
     KeymapParser(KeymapParser&& other) noexcept
-        : entries(std::move(other.entries))
-        , parseErrors(std::move(other.parseErrors))
-        , actionCommandIdCounts(std::move(other.actionCommandIdCounts))
-        , modified(other.modified) {
-        other.modified = false;
+        : m_entries(std::move(other.m_entries))
+        , m_parseErrors(std::move(other.m_parseErrors))
+        , m_actionCommandIdCounts(std::move(other.m_actionCommandIdCounts))
+        , m_modified(other.m_modified) {
+        other.m_modified = false;
     }
     KeymapParser& operator=(KeymapParser&& other) noexcept {
         if (this != &other) {
-            entries = std::move(other.entries);
-            parseErrors = std::move(other.parseErrors);
-            actionCommandIdCounts = std::move(other.actionCommandIdCounts);
-            modified = other.modified;
-            other.modified = false;
+            m_entries = std::move(other.m_entries);
+            m_parseErrors = std::move(other.m_parseErrors);
+            m_actionCommandIdCounts = std::move(other.m_actionCommandIdCounts);
+            m_modified = other.m_modified;
+            other.m_modified = false;
         }
         return *this;
     }
@@ -265,12 +265,6 @@ public:
     size_t removeEntriesByContext(Context context);
     size_t removeEntriesMatching(std::function<bool(const KeymapEntry*)> predicate);
 
-    bool updateEntry(const std::string& uniqueId, std::unique_ptr<KeymapEntry> newEntry);
-    bool replaceKeyBinding(const std::string& actionCommandId, Context context,
-                          int newModifierValue, int newKeyNoteValue);
-
-    void replaceEntriesOfType(EntryType type, const std::vector<std::unique_ptr<KeymapEntry>>& newEntries);
-
     bool writeToFile(const std::string& filePath) const;
     std::string toString() const;
 
@@ -281,7 +275,6 @@ public:
 
     const std::map<int, std::string>& getParseErrors() const { return m_parseErrors; }
     bool hasErrors() const { return !m_parseErrors.empty(); }
-    std::vector<std::string> validateEntries() const;
 
     size_t getEntryCount() const { return m_entries.size(); }
     std::map<EntryType, int> getEntryCountsByType() const;
@@ -329,27 +322,6 @@ namespace EntryFactory {
     std::unique_ptr<GlobalKeyBinding> createGlobalKeyBinding(int modifierValue, int keyNoteValue,
                                                            const std::string& actionCommandId,
                                                            Context context, GlobalKeyScope scope);
-}
-
-// Utility functions
-namespace KeymapUtils {
-    // File operations
-    bool isValidKeymapFile(const std::string& filePath);
-    bool backupFile(const std::string& filePath, const std::string& backupSuffix = ".backup");
-
-    std::unique_ptr<KeymapEntry> cloneEntry(const KeymapEntry* entry);
-
-    std::string decodeKeyCombo(int modifierValue, int keyNoteValue);
-    std::pair<int, int> encodeKeyCombo(const std::string& keyCombo);
-    bool isValidKeyCombo(int modifierValue, int keyNoteValue);
-
-    std::string contextToDisplayName(Context context);
-    Context displayNameToContext(const std::string& name);
-    std::vector<Context> getAllValidContexts();
-
-    bool isValidActionCommandId(const std::string& id);
-    bool isValidScriptPath(const std::string& path);
-    std::vector<std::string> validateKeymap(const KeymapParser& keymap);
 }
 
 } // namespace KeymapParser
