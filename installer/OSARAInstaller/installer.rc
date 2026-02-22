@@ -71,23 +71,44 @@ BEGIN
 END
 
 // Keymap Dialog
-IDD_KEYMAP DIALOG 0, 0, 400, 340
+IDD_KEYMAP DIALOG 0, 0, 400, 390
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Keymap Installation"
 FONT 8, "MS Sans Serif"
 BEGIN
     LTEXT "Choose keymap installation option:", IDC_STATIC, 20, 20, 360, 15
     LTEXT "The OSARA keymap will be installed in the \"keymaps\" folder of your Reaper directory. In addition, the installer can replace your active Reaper keymap with the new OSARA keymap if desired. What would you like to do?", IDC_STATIC, 20, 40, 360, 30
-    GROUPBOX "Keymap Options", IDC_STATIC, 20, 75, 360, 180
+    GROUPBOX "Keymap Options", IDC_STATIC, 20, 75, 360, 230
     CONTROL "Keep existing keymap", IDC_KEEP_KEYMAP, "Button", BS_AUTORADIOBUTTON | WS_GROUP, 30, 90, 200, 15
     LTEXT "Don't modify your existing keymap (recommended).", IDC_STATIC, 50, 110, 320, 15
     LTEXT "You can manually import OSARA shortcuts later if desired.", IDC_STATIC, 50, 125, 320, 15
-    CONTROL "Install OSARA keymap", IDC_INSTALL_KEYMAP, "Button", BS_AUTORADIOBUTTON, 30, 160, 200, 15
-    LTEXT "Replace your existing keymap with the OSARA keymap.", IDC_STATIC, 50, 180, 320, 15
-    LTEXT "Your current keymap will be backed up first.", IDC_STATIC, 50, 195, 320, 15
-    DEFPUSHBUTTON "Continue", IDC_CONTINUE, 250, 290, 60, 20, WS_TABSTOP
-    PUSHBUTTON "Back", IDC_BACK, 180, 290, 60, 20, WS_TABSTOP
-    PUSHBUTTON "Cancel", IDCANCEL, 320, 290, 60, 20, WS_TABSTOP
+    CONTROL "Install OSARA keymap", IDC_INSTALL_KEYMAP, "Button", BS_AUTORADIOBUTTON, 30, 155, 200, 15
+    LTEXT "Replace your existing keymap with the OSARA keymap.", IDC_STATIC, 50, 175, 320, 15
+    LTEXT "Your current keymap will be backed up first.", IDC_STATIC, 50, 190, 320, 15
+    CONTROL "Merge OSARA changes into your keymap", IDC_MERGE_KEYMAP, "Button", BS_AUTORADIOBUTTON, 30, 215, 230, 15
+    LTEXT "Selectively add new OSARA shortcuts and resolve conflicts.", IDC_STATIC, 50, 235, 320, 15
+    LTEXT "You choose which entries to adopt from a list.", IDC_STATIC, 50, 250, 320, 15
+    DEFPUSHBUTTON "Continue", IDC_CONTINUE, 250, 340, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Back", IDC_BACK, 180, 340, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 320, 340, 60, 20, WS_TABSTOP
+END
+
+// Keymap Merge Dialog
+IDD_KEYMAP_MERGE DIALOG 0, 0, 400, 370
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Merge OSARA Keymap"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT "Select entries to add to your keymap:", IDC_STATIC, 20, 15, 360, 15
+    LTEXT "New entries are prefixed [New]. Entries that conflict with your existing binding are prefixed [Conflict].", IDC_STATIC, 20, 30, 360, 30
+    LTEXT "", IDC_MERGE_STATUS, 20, 62, 360, 12
+    LISTBOX IDC_MERGE_LIST, 20, 77, 360, 185, LBS_EXTENDEDSEL | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    LTEXT "Space to select/deselect. No selection = no changes to your keymap.", IDC_STATIC, 20, 267, 360, 15
+    PUSHBUTTON "Select All", IDC_MERGE_SELECT_ALL, 20, 287, 80, 20, WS_TABSTOP
+    PUSHBUTTON "Deselect All", IDC_MERGE_DESELECT_ALL, 110, 287, 80, 20, WS_TABSTOP
+    DEFPUSHBUTTON "Continue", IDC_CONTINUE, 250, 340, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Back", IDC_BACK, 180, 340, 60, 20, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 320, 340, 60, 20, WS_TABSTOP
 END
 // Uninstall Confirmation Dialog
 IDD_UNINSTALL_CONFIRM DIALOG 0, 0, 400, 350

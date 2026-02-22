@@ -10,6 +10,7 @@
 #define IDD_UNINSTALL_CONFIRM 1005
 #define IDD_NO_OSARA_FOUND  1006
 #define IDD_COMPLETION      1007
+#define IDD_KEYMAP_MERGE    1008
 
 // Control IDs - Welcome Dialog
 #define IDC_WELCOME_TITLE   2000
@@ -37,6 +38,13 @@
 // Control IDs - Keymap Dialog
 #define IDC_INSTALL_KEYMAP  2030
 #define IDC_KEEP_KEYMAP     2032
+#define IDC_MERGE_KEYMAP    2033  // third radio button on IDD_KEYMAP
+
+// Control IDs - Keymap Merge Dialog
+#define IDC_MERGE_LIST           2070
+#define IDC_MERGE_SELECT_ALL     2071
+#define IDC_MERGE_DESELECT_ALL   2072
+#define IDC_MERGE_STATUS         2073
 
 // Control IDs - Completion Dialog
 #define IDC_SUCCESS_TEXT    2050

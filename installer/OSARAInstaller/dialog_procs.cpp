@@ -1,7 +1,11 @@
 #include "installer_app.h"
 #include "resource.h"
 #include "../../src/translation.h"
+#include "KeymapParser.h"
+#include "KeymapMerger.h"
 #include <string>
+#include <sstream>
+#include <vector>
 
 #include "swell.h"
 
@@ -488,24 +492,26 @@ INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         case WM_INITDIALOG:
         {
             g_hwnd = hwnd;
-            
+
             // Localize dialog using main OSARA approach
             translateDialog(hwnd);
-            
+
             // Set default to keep existing keymap (most conservative option)
             CheckDlgButton(hwnd, IDC_KEEP_KEYMAP, BST_CHECKED);
-            
+            CheckDlgButton(hwnd, IDC_INSTALL_KEYMAP, BST_UNCHECKED);
+            CheckDlgButton(hwnd, IDC_MERGE_KEYMAP, BST_UNCHECKED);
+
             if (g_installer)
             {
                 g_installer->GetState().keymapOption = KEYMAP_KEEP;
             }
-            
+
             // Set focus to the currently selected radio button
             SetFocus(GetDlgItem(hwnd, IDC_KEEP_KEYMAP));
             return FALSE; // We set focus manually
         }
-        
-        
+
+
         case WM_COMMAND:
             switch (LOWORD(wParam))
             {
@@ -515,24 +521,39 @@ INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                         // Ensure mutual exclusion with other keymap radio buttons
                         CheckDlgButton(hwnd, IDC_INSTALL_KEYMAP, BST_CHECKED);
                         CheckDlgButton(hwnd, IDC_KEEP_KEYMAP, BST_UNCHECKED);
-                        
+                        CheckDlgButton(hwnd, IDC_MERGE_KEYMAP, BST_UNCHECKED);
+
                         SetFocus(GetDlgItem(hwnd, IDC_INSTALL_KEYMAP));
                         g_installer->GetState().keymapOption = KEYMAP_INSTALL;
                     }
                     return TRUE;
-                    
+
                 case IDC_KEEP_KEYMAP:
                     if (HIWORD(wParam) == BN_CLICKED && g_installer)
                     {
                         // Ensure mutual exclusion with other keymap radio buttons
                         CheckDlgButton(hwnd, IDC_KEEP_KEYMAP, BST_CHECKED);
                         CheckDlgButton(hwnd, IDC_INSTALL_KEYMAP, BST_UNCHECKED);
-                        
+                        CheckDlgButton(hwnd, IDC_MERGE_KEYMAP, BST_UNCHECKED);
+
                         SetFocus(GetDlgItem(hwnd, IDC_KEEP_KEYMAP));
                         g_installer->GetState().keymapOption = KEYMAP_KEEP;
                     }
                     return TRUE;
-                    
+
+                case IDC_MERGE_KEYMAP:
+                    if (HIWORD(wParam) == BN_CLICKED && g_installer)
+                    {
+                        // Ensure mutual exclusion with other keymap radio buttons
+                        CheckDlgButton(hwnd, IDC_MERGE_KEYMAP, BST_CHECKED);
+                        CheckDlgButton(hwnd, IDC_KEEP_KEYMAP, BST_UNCHECKED);
+                        CheckDlgButton(hwnd, IDC_INSTALL_KEYMAP, BST_UNCHECKED);
+
+                        SetFocus(GetDlgItem(hwnd, IDC_MERGE_KEYMAP));
+                        g_installer->GetState().keymapOption = KEYMAP_MERGE;
+                    }
+                    return TRUE;
+
                 case IDC_CONTINUE:
                     if (g_installer)
                     {
@@ -544,6 +565,12 @@ INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                                 MB_YESNO | MB_ICONWARNING);
                             if (confirm != IDYES)
                                 return TRUE;
+                        }
+                        if (g_installer->GetState().keymapOption == KEYMAP_MERGE)
+                        {
+                            // Navigate to the merge dialog; installation happens there.
+                            g_installer->ShowScreen(IDD_KEYMAP_MERGE);
+                            return TRUE;
                         }
                         // Perform installation directly instead of showing progress dialog
                         g_installer->PerformInstallation();
@@ -569,6 +596,188 @@ INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             if (hwnd == g_hwnd) {
                 g_hwnd = NULL;
             }
+            return TRUE;
+    }
+    return FALSE;
+}
+
+// ---------------------------------------------------------------------------
+// Keymap Merge Dialog Procedure
+//
+// Parses the user's reaper-kb.ini and the bundled OSARA.ReaperKeyMap, then
+// presents new entries and conflicts in a multi-select listbox. The user
+// picks which OSARA entries to adopt; their choices are written back to
+// g_installer state so InstallKeymap() can perform the actual merge.
+//
+// VoiceOver notes:
+//   - The LTEXT above the listbox provides its accessible label.
+//   - Items are prefixed [New] or [Conflict] for clarity when read aloud.
+//   - Space toggles selection; Select All / Deselect All are tab-reachable.
+// ---------------------------------------------------------------------------
+
+// Module-level statics for the single-instance merge dialog.
+// These are valid for the lifetime of the dialog and reset in WM_INITDIALOG.
+static KeymapParser::KeymapParser s_mergeUserKeymap;
+static KeymapParser::KeymapParser s_mergeOsaraKeymap;
+static std::vector<std::string>   s_mergeItemIds; // listbox index → OSARA entry uniqueId
+
+INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+        case WM_INITDIALOG:
+        {
+            g_hwnd = hwnd;
+            translateDialog(hwnd);
+
+            // Reset statics for this invocation.
+            s_mergeUserKeymap.clear();
+            s_mergeOsaraKeymap.clear();
+            s_mergeItemIds.clear();
+
+            if (!g_installer)
+            {
+                SetDlgItemText(hwnd, IDC_MERGE_STATUS,
+                    translate("Installer not initialised."));
+                EnableWindow(GetDlgItem(hwnd, IDC_CONTINUE), FALSE);
+                return FALSE;
+            }
+
+            // Locate the OSARA keymap resource.
+            std::string resourcePath = g_installer->GetResourcePath();
+            std::string osaraKeymapPath = resourcePath.empty()
+                ? "OSARA.ReaperKeyMap"
+                : resourcePath + "/" + "OSARA.ReaperKeyMap";
+
+            if (!s_mergeOsaraKeymap.parseFile(osaraKeymapPath))
+            {
+                SetDlgItemText(hwnd, IDC_MERGE_STATUS,
+                    translate("Could not read OSARA keymap. Cannot perform merge."));
+                EnableWindow(GetDlgItem(hwnd, IDC_CONTINUE), FALSE);
+                return FALSE;
+            }
+
+            // Parse user keymap if it exists (empty parser = fresh install).
+            std::string userKeymapPath =
+                g_installer->GetBasePath() + "/reaper-kb.ini";
+
+            struct stat st;
+            if (stat(userKeymapPath.c_str(), &st) == 0)
+                s_mergeUserKeymap.parseFile(userKeymapPath);
+
+            // Analyse differences between the two keymaps.
+            std::vector<KeymapMerger::ConflictInfo> analysis =
+                KeymapMerger::KeymapMerger::analyzeConflicts(
+                    s_mergeUserKeymap, s_mergeOsaraKeymap);
+
+            HWND listBox = GetDlgItem(hwnd, IDC_MERGE_LIST);
+
+            int newCount      = 0;
+            int conflictCount = 0;
+
+            for (const auto& info : analysis)
+            {
+                if (!info.osaraEntry) continue;
+
+                SendMessage(listBox, LB_ADDSTRING, 0,
+                    reinterpret_cast<LPARAM>(info.description.c_str()));
+                s_mergeItemIds.push_back(info.osaraEntry->getUniqueId());
+
+                if (info.type ==
+                    KeymapMerger::ConflictInfo::ConflictType::DUPLICATE_KEY_BINDING)
+                    ++conflictCount;
+                else
+                    ++newCount;
+            }
+
+            // Build status summary string.
+            if (s_mergeItemIds.empty())
+            {
+                SetDlgItemText(hwnd, IDC_MERGE_STATUS,
+                    translate("Your keymap already contains all OSARA entries."));
+                // Continue still works (installs plugin / KeyMaps copy).
+            }
+            else
+            {
+                std::ostringstream status;
+                if (newCount > 0)
+                {
+                    status << newCount
+                           << translate(" new entr");
+                    status << (newCount == 1 ? translate("y") : translate("ies"));
+                }
+                if (conflictCount > 0)
+                {
+                    if (newCount > 0) status << translate(", ");
+                    status << conflictCount
+                           << translate(" conflict");
+                    if (conflictCount != 1) status << translate("s");
+                }
+                status << translate(".");
+                SetDlgItemText(hwnd, IDC_MERGE_STATUS, status.str().c_str());
+            }
+
+            SetFocus(GetDlgItem(hwnd, IDC_MERGE_LIST));
+            return FALSE; // We set focus manually
+        }
+
+        case WM_COMMAND:
+            switch (LOWORD(wParam))
+            {
+                case IDC_MERGE_SELECT_ALL:
+                    SendDlgItemMessage(hwnd, IDC_MERGE_LIST, LB_SETSEL, TRUE,
+                        static_cast<LPARAM>(-1));
+                    return TRUE;
+
+                case IDC_MERGE_DESELECT_ALL:
+                    SendDlgItemMessage(hwnd, IDC_MERGE_LIST, LB_SETSEL, FALSE,
+                        static_cast<LPARAM>(-1));
+                    return TRUE;
+
+                case IDC_CONTINUE:
+                    if (g_installer)
+                    {
+                        // Collect selected listbox indices by querying each item.
+                        HWND listBox = GetDlgItem(hwnd, IDC_MERGE_LIST);
+                        int totalCount = static_cast<int>(
+                            SendMessage(listBox, LB_GETCOUNT, 0, 0));
+
+                        g_installer->GetState().selectedMergeEntryIds.clear();
+
+                        for (int i = 0; i < totalCount; ++i)
+                        {
+                            if (SendMessage(listBox, LB_GETSEL,
+                                            static_cast<WPARAM>(i), 0) > 0)
+                            {
+                                if (static_cast<size_t>(i) < s_mergeItemIds.size())
+                                {
+                                    g_installer->GetState()
+                                        .selectedMergeEntryIds
+                                        .push_back(
+                                            s_mergeItemIds[
+                                                static_cast<size_t>(i)]);
+                                }
+                            }
+                        }
+
+                        g_installer->PerformInstallation();
+                        g_installer->ShowScreen(IDD_COMPLETION);
+                    }
+                    return TRUE;
+
+                case IDC_BACK:
+                    if (g_installer)
+                        g_installer->ShowPreviousScreen();
+                    return TRUE;
+
+                case IDCANCEL:
+                    return handleCancelButton(hwnd);
+            }
+            break;
+
+        case WM_DESTROY:
+            if (hwnd == g_hwnd)
+                g_hwnd = NULL;
             return TRUE;
     }
     return FALSE;

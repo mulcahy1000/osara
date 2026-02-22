@@ -1,6 +1,7 @@
 #include "installer_app.h"
 #include "resource.h"
 #include "../../src/translation.h"
+#include "KeymapParser.h"
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -59,6 +60,9 @@ void InstallerApp::ShowScreen(int dialogId)
         break;
         case IDD_KEYMAP:
         dlgProc = KeymapDlgProc;
+        break;
+        case IDD_KEYMAP_MERGE:
+        dlgProc = KeymapMergeDlgProc;
         break;
         case IDD_UNINSTALL_CONFIRM:
         dlgProc = UninstallConfirmDlgProc;
@@ -211,7 +215,9 @@ bool InstallerApp::PerformInstallation()
             std::string base = GetBasePath();
             installedFiles.push_back(
                 base + PATH_SEPARATOR + "KeyMaps" + PATH_SEPARATOR + "OSARA.ReaperKeyMap");
-            if (m_state.keymapOption == KEYMAP_INSTALL)
+            if (m_state.keymapOption == KEYMAP_INSTALL ||
+                (m_state.keymapOption == KEYMAP_MERGE &&
+                 !m_state.selectedMergeEntryIds.empty()))
                 installedFiles.push_back(base + PATH_SEPARATOR + "reaper-kb.ini");
         }
 
@@ -380,6 +386,67 @@ bool InstallerApp::InstallKeymap()
             // Roll back the KeyMaps file we already installed so the caller
             // sees a clean failure with no partial state left behind.
             remove(keyMapsDest.c_str());
+            return false;
+        }
+    }
+    else if (m_state.keymapOption == KEYMAP_MERGE &&
+             !m_state.selectedMergeEntryIds.empty())
+    {
+        std::string userKeymapPath = basePath + PATH_SEPARATOR + "reaper-kb.ini";
+
+        KeymapParser::KeymapParser userKeymap, osaraKeymap;
+        if (!osaraKeymap.parseFile(keymapSource))
+        {
+            remove(keyMapsDest.c_str());
+            m_state.lastError = translate("Failed to parse OSARA keymap for merge.");
+            return false;
+        }
+
+        // Parse user keymap if it exists; if absent we start from an empty keymap.
+        struct stat keymapStat;
+        if (stat(userKeymapPath.c_str(), &keymapStat) == 0)
+        {
+            if (!userKeymap.parseFile(userKeymapPath))
+            {
+                remove(keyMapsDest.c_str());
+                m_state.lastError = translate("Failed to parse your existing keymap for merge.");
+                return false;
+            }
+        }
+
+        // For each selected entry, remove any conflicting user entry with the
+        // same unique ID, then append the OSARA entry below.
+        for (const auto& id : m_state.selectedMergeEntryIds)
+            userKeymap.removeEntry(id);
+
+        // Build merged content: retained user entries + selected OSARA additions.
+        std::string merged = userKeymap.toString();
+        for (const auto& id : m_state.selectedMergeEntryIds)
+        {
+            for (const auto& entry : osaraKeymap.getEntries())
+            {
+                if (entry->getUniqueId() == id)
+                {
+                    merged += entry->toString() + "\n";
+                    break;
+                }
+            }
+        }
+
+        std::ofstream out(userKeymapPath, std::ios::trunc);
+        if (!out.is_open())
+        {
+            remove(keyMapsDest.c_str());
+            m_state.lastError = translate("Failed to open keymap file for writing.");
+            return false;
+        }
+        out << merged;
+        if (!out)
+        {
+            out.close();
+            remove(keyMapsDest.c_str());
+            remove(userKeymapPath.c_str());
+            m_state.lastError = translate("Failed to write merged keymap.");
             return false;
         }
     }
@@ -616,8 +683,12 @@ bool InstallerApp::BackupExistingFiles()
         m_state.pluginBackupPath = backupPath;
     }
 
-    // Back up the active keymap only when we are going to replace it.
-    if (m_state.keymapOption == KEYMAP_INSTALL)
+    // Back up the active keymap when we are going to write to it (replace or merge).
+    bool shouldBackupKeymap =
+        m_state.keymapOption == KEYMAP_INSTALL ||
+        (m_state.keymapOption == KEYMAP_MERGE &&
+         !m_state.selectedMergeEntryIds.empty());
+    if (shouldBackupKeymap)
     {
         std::string keymapPath = basePath + PATH_SEPARATOR + "reaper-kb.ini";
         if (stat(keymapPath.c_str(), &statbuf) == 0)

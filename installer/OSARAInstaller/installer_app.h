@@ -30,7 +30,8 @@ enum InstallationType
 enum KeymapOption
 {
     KEYMAP_INSTALL,
-    KEYMAP_KEEP
+    KEYMAP_KEEP,
+    KEYMAP_MERGE
 };
 
 // Installation state
@@ -47,6 +48,8 @@ struct InstallationState
     std::string keymapBackupPath;
     std::string pluginBackupPath;
     std::vector<std::string> filesToRemove;
+    // Unique IDs of OSARA entries chosen for merge (populated by KeymapMergeDlgProc)
+    std::vector<std::string> selectedMergeEntryIds;
     
     InstallationState() 
         : operationMode(MODE_INSTALL)
@@ -74,6 +77,7 @@ public:
 
     // Installation paths
     std::string GetDefaultInstallPath();
+    std::string GetBasePath();
     bool ValidateInstallPath(const std::string& path);
     
     // Installation process
@@ -92,7 +96,7 @@ public:
 private:
     InstallationState m_state;
     std::vector<int> m_screenHistory;
-    
+
     // Internal installation methods
     bool CopyPluginFiles();
     bool CopyLocaleFiles();
@@ -100,8 +104,7 @@ private:
     bool CreateDirectories();
     bool BackupExistingFiles();
 
-    // Path utilities
-    std::string GetBasePath();
+    // Path utilities (GetBasePath is public above)
     std::string GetUserLibraryPath();
     bool DirectoryExists(const std::string& path);
     bool CreateDirectoryPath(const std::string& path);
@@ -119,6 +122,7 @@ INT_PTR CALLBACK ModeSelectionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
 INT_PTR CALLBACK LicenseDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK InstallTypeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK UninstallConfirmDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK NoOSARAFoundDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK CompletionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
