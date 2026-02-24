@@ -34,6 +34,10 @@ enum KeymapOption
     KEYMAP_MERGE
 };
 
+// Result codes returned by the native macOS keymap merge dialog.
+// Used by mac_schedule_merge_dialog (dialog_procs_mac.mm) to drive navigation.
+enum class MergeDialogAction { Continue, Back, Cancel };
+
 // Installation state
 struct InstallationState
 {

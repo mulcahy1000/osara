@@ -79,6 +79,11 @@ std::string KeyBinding::toString() const {
 }
 
 std::string KeyBinding::getDescription() const {
+    // Action command ID "0" means "explicitly disable this key slot".
+    // Showing "-> 0" is cryptic; just name the key so descriptions like
+    // "Remove: Tab" are readable without the confusing arrow-zero suffix.
+    if (m_actionCommandId.empty() || m_actionCommandId == "0")
+        return getKeyComboString();
     return getKeyComboString() + " -> " + m_actionCommandId;
 }
 

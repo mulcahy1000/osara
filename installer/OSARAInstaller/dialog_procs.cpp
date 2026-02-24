@@ -14,6 +14,11 @@ extern void mac_show_error(HWND hwnd, const char* message);
 extern bool mac_confirm_cancel(HWND hwnd);
 extern void mac_terminate_app();
 extern bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath);
+// Native Cocoa keymap merge dialog (replaces SWELL listbox on macOS).
+extern void mac_schedule_merge_dialog(HWND hwnd,
+                                      const std::vector<std::string>& itemIds,
+                                      const std::vector<std::string>& descriptions,
+                                      const std::string& statusText);
 
 // Helper function to show error messages
 void ShowError(HWND hwnd, const char* message)
@@ -718,6 +723,41 @@ INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
 
             SetFocus(GetDlgItem(hwnd, IDC_MERGE_LIST));
+
+#ifdef __APPLE__
+            // On macOS the SWELL multi-select listbox cannot expose
+            // "checked/unchecked" state to VoiceOver and the space bar
+            // cannot toggle items.  Replace it with a native Cocoa panel that
+            // uses NSButtonCell checkboxes, which VoiceOver reads correctly.
+            //
+            // Collect the item data from the already-populated listbox, then
+            // move the SWELL window off-screen (ShowScreen will call
+            // ShowWindow on it a moment later, but we don't want it visible)
+            // and schedule the native panel on the next run-loop tick.
+            {
+                HWND listBox = GetDlgItem(hwnd, IDC_MERGE_LIST);
+                int cnt = (int)SendMessage(listBox, LB_GETCOUNT, 0, 0);
+                std::vector<std::string> descriptions;
+                descriptions.reserve((size_t)cnt);
+                for (int i = 0; i < cnt; ++i)
+                {
+                    char buf[2048] = {};
+                    SendMessage(listBox, LB_GETTEXT, (WPARAM)i, (LPARAM)buf);
+                    descriptions.push_back(buf);
+                }
+                char statusBuf[512] = {};
+                GetDlgItemText(hwnd, IDC_MERGE_STATUS,
+                               statusBuf, (int)sizeof(statusBuf));
+
+                // Park the SWELL window far off-screen so it isn't visible
+                // even briefly after ShowScreen calls ShowWindow().
+                SetWindowPos(hwnd, NULL, -20000, -20000, 0, 0,
+                             SWP_NOSIZE | SWP_NOZORDER);
+
+                mac_schedule_merge_dialog(hwnd, s_mergeItemIds,
+                                          descriptions, statusBuf);
+            }
+#endif
             return FALSE; // We set focus manually
         }
 
