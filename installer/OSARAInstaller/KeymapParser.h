@@ -249,6 +249,9 @@ public:
     std::vector<KeymapEntry*> getEntriesByContext(Context context) const;
     KeymapEntry* findEntryByActionCommandId(const std::string& id) const;
     std::vector<KeyBinding*> findKeyBindingsForAction(const std::string& actionId) const;
+    // Returns all KEY_BINDING entries that share a key combo (modifier+key+context)
+    // with at least one other entry — i.e. every member of every conflicting pair.
+    std::vector<KeyBinding*> findConflictingKeyBindings() const;
 
     void addEntry(std::unique_ptr<KeymapEntry> entry);
     void addKeyBinding(int modifierValue, int keyNoteValue, 
@@ -305,6 +308,13 @@ private:
     std::map<std::string, int> m_actionCommandIdCounts;
     bool m_modified = false;
 };
+
+// Utility helpers
+namespace KeymapUtils {
+    std::string contextToDisplayName(Context context);
+    Context displayNameToContext(const std::string& displayName);
+    bool isValidActionCommandId(const std::string& id);
+}
 
 // Factory functions for creating entries
 namespace EntryFactory {

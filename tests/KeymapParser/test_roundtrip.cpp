@@ -57,35 +57,39 @@ KEY 1 117 7 0		 # Main : F6 : OVERRIDE DEFAULT : Track: Toggle solo for selected
     for (size_t i = 0; i < entries1.size(); ++i) {
         const auto& entry1 = entries1[i];
         const auto& entry2 = entries2[i];
-        
+
         // Check basic properties
-        assert(entry1->getType() == entry2->getType() && 
+        assert(entry1->getType() == entry2->getType() &&
                "Entry types should match");
-        assert(entry1->getUniqueId() == entry2->getUniqueId() && 
+        assert(entry1->getUniqueId() == entry2->getUniqueId() &&
                "Unique IDs should match");
-        assert(entry1->getContext() == entry2->getContext() && 
+        assert(entry1->getContext() == entry2->getContext() &&
                "Contexts should match");
-        
-        // Check comments are preserved (semantic content, not exact whitespace)
-        std::string comment1 = entry1->getComment();
-        std::string comment2 = entry2->getComment();
-        
+
         // Extract just the comment text (after the #)
-        auto extractCommentText = [](const std::string& comment) {
+        auto extractCommentText = [](const std::string& comment) -> std::string {
             size_t hashPos = comment.find('#');
             if (hashPos != std::string::npos) {
                 return comment.substr(hashPos);
             }
             return comment;
         };
-        
-        std::string commentText1 = extractCommentText(comment1);
-        std::string commentText2 = extractCommentText(comment2);
-        
-        assert(commentText1 == commentText2 && 
-               "Comment content should be preserved");
+
+        std::string comment1 = entry1->getComment();
+        std::string comment2 = entry2->getComment();
+
+        // If the original entry had a comment, it must be preserved verbatim.
+        // Entries that originally had no comment may gain an auto-generated one
+        // on round-trip (toString() emits a description comment for uncommented
+        // entries), so we only enforce equality when a comment was present.
+        if (!comment1.empty()) {
+            std::string commentText1 = extractCommentText(comment1);
+            std::string commentText2 = extractCommentText(comment2);
+            assert(commentText1 == commentText2 &&
+                   "Comment content should be preserved");
+        }
     }
-    
+
     std::cout << "✓ Round-trip with comments test passed" << std::endl;
 }
 
@@ -210,34 +214,31 @@ void testRoundTripWithRealKeymapFiles() {
         
         // Test first 10 entries (or all if fewer than 10)
         size_t samplesToTest = std::min(static_cast<size_t>(10), entries1.size());
+        auto extractCommentText = [](const std::string& comment) -> std::string {
+            size_t hashPos = comment.find('#');
+            if (hashPos != std::string::npos) return comment.substr(hashPos);
+            return comment;
+        };
+
         for (size_t i = 0; i < samplesToTest; ++i) {
             const auto& entry1 = entries1[i];
             const auto& entry2 = entries2[i];
-            
-            assert(entry1->getType() == entry2->getType() && 
+
+            assert(entry1->getType() == entry2->getType() &&
                    ("Entry types should match at index " + std::to_string(i) + " for " + keymapPath).c_str());
-            assert(entry1->getUniqueId() == entry2->getUniqueId() && 
+            assert(entry1->getUniqueId() == entry2->getUniqueId() &&
                    ("Unique IDs should match at index " + std::to_string(i) + " for " + keymapPath).c_str());
-            assert(entry1->getContext() == entry2->getContext() && 
+            assert(entry1->getContext() == entry2->getContext() &&
                    ("Contexts should match at index " + std::to_string(i) + " for " + keymapPath).c_str());
-            
-            // Check comment content preservation (semantic, not whitespace)
+
+            // Only check comment preservation when the original had a comment.
+            // Entries without comments gain an auto-generated one on round-trip.
             std::string comment1 = entry1->getComment();
             std::string comment2 = entry2->getComment();
-            
-            auto extractCommentText = [](const std::string& comment) {
-                size_t hashPos = comment.find('#');
-                if (hashPos != std::string::npos) {
-                    return comment.substr(hashPos);
-                }
-                return comment;
-            };
-            
-            std::string commentText1 = extractCommentText(comment1);
-            std::string commentText2 = extractCommentText(comment2);
-            
-            assert(commentText1 == commentText2 && 
-                   ("Comment content should be preserved at index " + std::to_string(i) + " for " + keymapPath).c_str());
+            if (!comment1.empty()) {
+                assert(extractCommentText(comment1) == extractCommentText(comment2) &&
+                       ("Comment content should be preserved at index " + std::to_string(i) + " for " + keymapPath).c_str());
+            }
         }
         
         // Clean up temp file

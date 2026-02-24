@@ -55,6 +55,15 @@ struct ConflictInfo {
     KeymapParser::KeymapEntry* osaraEntry = nullptr;
     std::string resolution;
     bool resolved = false;
+    // Whether this entry should be pre-checked in the merge dialog.
+    // Add and Update entries are pre-checked (low risk); Replace entries are
+    // not (the user must explicitly choose to overwrite an existing binding).
+    bool defaultSelected = false;
+    // UIDs of companion entries (e.g. the ACT/SCR definition for a KEY binding)
+    // that should be merged automatically when this entry is selected.
+    // These entries are suppressed from the displayed list so the user sees only
+    // one row for what is logically a single change.
+    std::vector<std::string> impliedEntryIds;
 };
 
 struct MergeResult {

@@ -3,9 +3,11 @@
 #include "../../src/translation.h"
 #include "KeymapParser.h"
 #include "KeymapMerger.h"
+#include <set>
 #include <string>
 #include <sstream>
 #include <vector>
+#include <sys/stat.h>
 
 #include "swell.h"
 
@@ -18,6 +20,8 @@ extern bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath);
 extern void mac_schedule_merge_dialog(HWND hwnd,
                                       const std::vector<std::string>& itemIds,
                                       const std::vector<std::string>& descriptions,
+                                      const std::vector<std::vector<std::string>>& impliedIds,
+                                      const std::vector<bool>& defaultSelected,
                                       const std::string& statusText);
 
 // Helper function to show error messages
@@ -624,7 +628,9 @@ INT_PTR CALLBACK KeymapDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 // These are valid for the lifetime of the dialog and reset in WM_INITDIALOG.
 static KeymapParser::KeymapParser s_mergeUserKeymap;
 static KeymapParser::KeymapParser s_mergeOsaraKeymap;
-static std::vector<std::string>   s_mergeItemIds; // listbox index → OSARA entry uniqueId
+static std::vector<std::string>              s_mergeItemIds;       // listbox index → OSARA entry uniqueId
+static std::vector<std::vector<std::string>> s_mergeImpliedIds;    // companion IDs implied by each item
+static std::vector<bool>                     s_mergeDefaultSelected; // initial checked state per item
 
 INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -639,6 +645,8 @@ INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             s_mergeUserKeymap.clear();
             s_mergeOsaraKeymap.clear();
             s_mergeItemIds.clear();
+            s_mergeImpliedIds.clear();
+            s_mergeDefaultSelected.clear();
 
             if (!g_installer)
             {
@@ -677,22 +685,32 @@ INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
             HWND listBox = GetDlgItem(hwnd, IDC_MERGE_LIST);
 
-            int newCount      = 0;
-            int conflictCount = 0;
+            int addCount     = 0;
+            int updateCount  = 0;
+            int replaceCount = 0;
 
             for (const auto& info : analysis)
             {
                 if (!info.osaraEntry) continue;
 
-                SendMessage(listBox, LB_ADDSTRING, 0,
+                int idx = (int)SendMessage(listBox, LB_ADDSTRING, 0,
                     reinterpret_cast<LPARAM>(info.description.c_str()));
                 s_mergeItemIds.push_back(info.osaraEntry->getUniqueId());
+                s_mergeImpliedIds.push_back(info.impliedEntryIds);
+                s_mergeDefaultSelected.push_back(info.defaultSelected);
 
-                if (info.type ==
-                    KeymapMerger::ConflictInfo::ConflictType::DUPLICATE_KEY_BINDING)
-                    ++conflictCount;
+                // Pre-select items that are safe by default.
+                if (info.defaultSelected && idx >= 0)
+                    SendMessage(listBox, LB_SETSEL, TRUE,
+                                static_cast<LPARAM>(idx));
+
+                // Tally for status string.
+                if (info.description.rfind("Add:", 0) == 0)
+                    ++addCount;
+                else if (info.description.rfind("Update:", 0) == 0)
+                    ++updateCount;
                 else
-                    ++newCount;
+                    ++replaceCount;
             }
 
             // Build status summary string.
@@ -705,19 +723,16 @@ INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             else
             {
                 std::ostringstream status;
-                if (newCount > 0)
-                {
-                    status << newCount
-                           << translate(" new entr");
-                    status << (newCount == 1 ? translate("y") : translate("ies"));
-                }
-                if (conflictCount > 0)
-                {
-                    if (newCount > 0) status << translate(", ");
-                    status << conflictCount
-                           << translate(" conflict");
-                    if (conflictCount != 1) status << translate("s");
-                }
+                bool needComma = false;
+                auto append = [&](int n, const char* singular, const char* plural) {
+                    if (n == 0) return;
+                    if (needComma) status << translate(", ");
+                    status << n << translate(n == 1 ? singular : plural);
+                    needComma = true;
+                };
+                append(addCount,     " to add",           " to add");
+                append(updateCount,  " to update",        " to update");
+                append(replaceCount, " conflict",         " conflicts");
                 status << translate(".");
                 SetDlgItemText(hwnd, IDC_MERGE_STATUS, status.str().c_str());
             }
@@ -735,7 +750,6 @@ INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             // ShowWindow on it a moment later, but we don't want it visible)
             // and schedule the native panel on the next run-loop tick.
             {
-                HWND listBox = GetDlgItem(hwnd, IDC_MERGE_LIST);
                 int cnt = (int)SendMessage(listBox, LB_GETCOUNT, 0, 0);
                 std::vector<std::string> descriptions;
                 descriptions.reserve((size_t)cnt);
@@ -755,7 +769,8 @@ INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                              SWP_NOSIZE | SWP_NOZORDER);
 
                 mac_schedule_merge_dialog(hwnd, s_mergeItemIds,
-                                          descriptions, statusBuf);
+                                          descriptions, s_mergeImpliedIds,
+                                          s_mergeDefaultSelected, statusBuf);
             }
 #endif
             return FALSE; // We set focus manually
@@ -782,20 +797,33 @@ INT_PTR CALLBACK KeymapMergeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                         int totalCount = static_cast<int>(
                             SendMessage(listBox, LB_GETCOUNT, 0, 0));
 
-                        g_installer->GetState().selectedMergeEntryIds.clear();
+                        auto& selectedIds =
+                            g_installer->GetState().selectedMergeEntryIds;
+                        selectedIds.clear();
+                        std::set<std::string> addedIds;
 
                         for (int i = 0; i < totalCount; ++i)
                         {
                             if (SendMessage(listBox, LB_GETSEL,
                                             static_cast<WPARAM>(i), 0) > 0)
                             {
-                                if (static_cast<size_t>(i) < s_mergeItemIds.size())
+                                const size_t idx = static_cast<size_t>(i);
+                                if (idx < s_mergeItemIds.size())
                                 {
-                                    g_installer->GetState()
-                                        .selectedMergeEntryIds
-                                        .push_back(
-                                            s_mergeItemIds[
-                                                static_cast<size_t>(i)]);
+                                    const std::string& id = s_mergeItemIds[idx];
+                                    if (addedIds.insert(id).second)
+                                        selectedIds.push_back(id);
+                                    // Also add any companion entries (e.g. the
+                                    // ACT definition behind a KEY binding row).
+                                    if (idx < s_mergeImpliedIds.size())
+                                    {
+                                        for (const auto& implied :
+                                             s_mergeImpliedIds[idx])
+                                        {
+                                            if (addedIds.insert(implied).second)
+                                                selectedIds.push_back(implied);
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -1,6 +1,7 @@
 #include "installer_app.h"
 #include "resource.h"
 #include "../../src/translation.h"
+#include <set>
 #include <string>
 #include <vector>
 
@@ -109,15 +110,19 @@ bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath)
 // ---- MergeEntry: one row in the checkbox table ----------------------------
 
 @interface MergeEntry : NSObject
-@property (nonatomic, copy)   NSString *label;
-@property (nonatomic, copy)   NSString *uniqueId;
-@property (nonatomic, assign) BOOL      selected;
+@property (nonatomic, copy)   NSString              *label;
+@property (nonatomic, copy)   NSString              *uniqueId;
+@property (nonatomic, assign) BOOL                   selected;
+// UIDs of companion entries merged automatically when this entry is selected
+// (e.g. the ACT/SCR action definition behind a KEY binding row).
+@property (nonatomic, strong) NSArray<NSString *>   *impliedIds;
 @end
 @implementation MergeEntry
 - (void)dealloc
 {
     [_label release];
     [_uniqueId release];
+    [_impliedIds release];
     [super dealloc];
 }
 @end
@@ -131,7 +136,7 @@ bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath)
 - (void)keyDown:(NSEvent *)event
 {
     // Route Space bar to the data source's setObjectValue path, which toggles
-    // the checkbox for the focused row.  All other keys use default handling.
+    // the checkbox for the focused row.
     if ([[event characters] isEqualToString:@" "])
     {
         NSInteger row = [self selectedRow];
@@ -143,6 +148,17 @@ bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath)
                           forTableColumn:[[self tableColumns] firstObject]
                                      row:row];
         }
+    }
+    // Tab / Shift-Tab: advance the key-view loop instead of letting the table
+    // attempt to traverse editable cells.  Use keyCode (not characters) because
+    // Shift-Tab produces characters="\x19" (ASCII 25), not "\t".
+    else if ([event keyCode] == 48)
+    {
+        BOOL shift = ([event modifierFlags] & NSEventModifierFlagShift) != 0;
+        if (shift)
+            [[self window] selectPreviousKeyView:self];
+        else
+            [[self window] selectNextKeyView:self];
     }
     else
     {
@@ -219,9 +235,12 @@ bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath)
 // the native panel stays open if the user decides not to cancel.
 
 @interface MergeButtonCoordinator : NSObject <NSWindowDelegate>
-@property (nonatomic, strong) NSMutableArray<MergeEntry *> *entries;
-@property (nonatomic, assign) NSTableView                  *tableView; // outlives coordinator
-@property (nonatomic, assign) NSWindow                     *window;    // outlives coordinator
+// Two separate entry arrays: pre-checked safe items and unchecked conflicts.
+@property (nonatomic, strong) NSMutableArray<MergeEntry *> *safeEntries;
+@property (nonatomic, strong) NSMutableArray<MergeEntry *> *conflictEntries;
+@property (nonatomic, assign) NSTableView                  *safeTableView;     // outlives coordinator
+@property (nonatomic, assign) NSTableView                  *conflictTableView; // outlives coordinator
+@property (nonatomic, assign) NSWindow                     *window;            // outlives coordinator
 @end
 
 @implementation MergeButtonCoordinator
@@ -239,16 +258,18 @@ bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath)
 
 - (void)doSelectAll:(id)sender
 {
-    for (MergeEntry *e in self.entries)
-        e.selected = YES;
-    [self.tableView reloadData];
+    for (MergeEntry *e in self.safeEntries)     e.selected = YES;
+    for (MergeEntry *e in self.conflictEntries) e.selected = YES;
+    [self.safeTableView     reloadData];
+    [self.conflictTableView reloadData];
 }
 
 - (void)doDeselectAll:(id)sender
 {
-    for (MergeEntry *e in self.entries)
-        e.selected = NO;
-    [self.tableView reloadData];
+    for (MergeEntry *e in self.safeEntries)     e.selected = NO;
+    for (MergeEntry *e in self.conflictEntries) e.selected = NO;
+    [self.safeTableView     reloadData];
+    [self.conflictTableView reloadData];
 }
 
 // Shows a sheet-modal confirmation; stops the modal only if the user confirms.
@@ -283,21 +304,28 @@ bool mac_browse_for_folder(HWND hwnd, std::string& selectedPath)
 
 - (void)dealloc
 {
-    [_entries release];
+    [_safeEntries release];
+    [_conflictEntries release];
     [super dealloc];
 }
 
 @end
 
 // ---- mac_run_keymap_merge_panel: builds and runs the window modally --------
+//
+// Two stacked checkbox tables are shown:
+//   • "New and Updated Entries"  (safeEntries,    all pre-checked)
+//   • "Conflicts"                (conflictEntries, all unchecked)
+// This lets users Tab past the safe table quickly and focus on conflicts.
 
 static MergeDialogAction mac_run_keymap_merge_panel(
-        NSMutableArray<MergeEntry *> *entries,
+        NSMutableArray<MergeEntry *> *safeEntries,
+        NSMutableArray<MergeEntry *> *conflictEntries,
         NSString *statusText)
 {
     @autoreleasepool
     {
-    const CGFloat W = 540, H = 440, M = 16;
+    const CGFloat W = 540, H = 560, M = 16;
     const CGFloat innerW = W - 2*M;
 
     NSWindow *win = [[NSWindow alloc]
@@ -308,22 +336,25 @@ static MergeDialogAction mac_run_keymap_merge_panel(
     [win setTitle:@"Merge OSARA Keymap"];
     [win setReleasedWhenClosed:NO]; // we release manually below; avoids double-free
     [win center];
+    // Disable automatic key-view-loop recalculation so that NSScroller subviews
+    // inside the scroll views are never inserted into our explicit Tab order.
+    [win setAutorecalculatesKeyViewLoop:NO];
 
     NSView *content = [win contentView];
 
     // -- Instruction label (top) --
     NSTextField *instrLabel = [NSTextField wrappingLabelWithString:
-        @"Select entries to add to your keymap. "
-        "New entries are prefixed [New]. "
-        "Entries that conflict with your existing binding are prefixed [Conflict]."];
+        @"Add and Update entries are pre-checked. "
+        "Replace entries overwrite an existing binding — "
+        "uncheck any you want to keep."];
     instrLabel.frame = NSMakeRect(M, H - M - 40, innerW, 40);
     [instrLabel setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [content addSubview:instrLabel];
 
-    // -- Status label (e.g. "3 new entries, 1 conflict.") --
+    // -- Status label (e.g. "3 to add, 1 conflict.") --
     NSTextField *statusLabel = [NSTextField labelWithString:
         (statusText.length ? statusText : @"")];
-    statusLabel.frame = NSMakeRect(M, H - M - 40 - 20, innerW, 18);
+    statusLabel.frame = NSMakeRect(M, H - M - 40 - 6 - 18, innerW, 18);
     [statusLabel setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [content addSubview:statusLabel];
 
@@ -331,8 +362,9 @@ static MergeDialogAction mac_run_keymap_merge_panel(
     const CGFloat btnH = 28, btnW = 86, btnY = M;
 
     MergeButtonCoordinator *coord = [[MergeButtonCoordinator alloc] init];
-    coord.entries = entries;
-    coord.window  = win;
+    coord.safeEntries     = safeEntries;
+    coord.conflictEntries = conflictEntries;
+    coord.window          = win;
     [win setDelegate:coord];
 
     NSButton *cancelBtn   = [NSButton buttonWithTitle:@"Cancel"
@@ -351,11 +383,11 @@ static MergeDialogAction mac_run_keymap_merge_panel(
                                                target:coord
                                                action:@selector(doContinue:)];
 
-    cancelBtn.frame   = NSMakeRect(M,                         btnY, btnW, btnH);
-    backBtn.frame     = NSMakeRect(M + btnW + 6,              btnY, btnW, btnH);
-    deselectBtn.frame = NSMakeRect(W/2.0 - 92,                btnY, 90,   btnH);
-    selectBtn.frame   = NSMakeRect(W/2.0 + 2,                 btnY, 88,   btnH);
-    continueBtn.frame = NSMakeRect(W - M - btnW,              btnY, btnW, btnH);
+    cancelBtn.frame   = NSMakeRect(M,                    btnY, btnW, btnH);
+    backBtn.frame     = NSMakeRect(M + btnW + 6,         btnY, btnW, btnH);
+    deselectBtn.frame = NSMakeRect(W/2.0 - 92,           btnY, 90,   btnH);
+    selectBtn.frame   = NSMakeRect(W/2.0 + 2,            btnY, 88,   btnH);
+    continueBtn.frame = NSMakeRect(W - M - btnW,         btnY, btnW, btnH);
 
     [continueBtn setBezelStyle:NSBezelStyleRounded];
     [continueBtn setKeyEquivalent:@"\r"];   // Return = Continue
@@ -366,60 +398,146 @@ static MergeDialogAction mac_run_keymap_merge_panel(
 
     // -- Hint text above buttons --
     const CGFloat hintY = btnY + btnH + 4;
+    const CGFloat hintH = 16;
     NSTextField *hintLabel = [NSTextField labelWithString:
         @"Space or VO+Space to check / uncheck. "
         "No checked entries = no keymap changes."];
-    hintLabel.frame = NSMakeRect(M, hintY, innerW, 16);
+    hintLabel.frame = NSMakeRect(M, hintY, innerW, hintH);
     [hintLabel setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [hintLabel setTextColor:[NSColor secondaryLabelColor]];
     [content addSubview:hintLabel];
 
-    // -- Scroll view + table --
-    const CGFloat tableBottom = hintY + 16 + 6;
-    const CGFloat tableTop    = H - M - 40 - 20 - 6;
-    const CGFloat tableH      = tableTop - tableBottom;
+    // ---- Two-table layout (bottom-up) ----
+    //
+    // Conflict table (bottom section — needs user attention)
+    const CGFloat conflictTableBottom = hintY + hintH + 8;
+    const CGFloat conflictTableH      = 190;
+    const CGFloat conflictTableTop    = conflictTableBottom + conflictTableH;
 
-    MergeTableView *tv = [[MergeTableView alloc]
-        initWithFrame:NSMakeRect(0, 0, innerW, tableH)];
-    [tv setHeaderView:nil];
-    [tv setUsesAlternatingRowBackgroundColors:YES];
-    [tv setAllowsMultipleSelection:NO]; // focus moves row by row; checkbox is the selection
-    [tv setFocusRingType:NSFocusRingTypeExterior];
-    [tv setAccessibilityLabel:@"Keymap entries"];
+    // Conflict section header label (sits directly above the conflict table)
+    const CGFloat conflictHdrY   = conflictTableTop + 4;
+    const CGFloat conflictHdrH   = 18;
+    const CGFloat conflictHdrTop = conflictHdrY + conflictHdrH;
 
-    // Single column using NSButtonCell (NSSwitchButton) as the data cell.
-    // objectValue (NSNumber BOOL) drives checked state.
-    // willDisplayCell: sets the per-row title (the entry description).
-    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"entry"];
-    [col setWidth:innerW - 4];
-    [col setEditable:YES]; // required so setObjectValue: fires on click
-    NSButtonCell *proto = [[NSButtonCell alloc] init];
-    [proto setButtonType:NSSwitchButton];
-    [proto setImagePosition:NSImageLeft];
-    [proto setControlSize:NSControlSizeRegular];
-    [proto setFont:[NSFont systemFontOfSize:[NSFont systemFontSize]]];
-    [col setDataCell:proto];
-    [proto release];
-    [tv addTableColumn:col];
-    [col release];
+    // Safe table (top section — pre-checked, typically just Tab past)
+    const CGFloat safeTableBottom = conflictHdrTop + 6;
+    const CGFloat safeTableH      = 160;
+    const CGFloat safeTableTop    = safeTableBottom + safeTableH;
 
-    MergeTableController *controller = [[MergeTableController alloc] init];
-    controller.entries   = entries;
-    controller.tableView = tv;
-    coord.tableView      = tv;
-    [tv setDataSource:controller];
-    [tv setDelegate:controller];
+    // Safe section header label (sits directly above the safe table)
+    const CGFloat safeHdrY = safeTableTop + 4;
+    const CGFloat safeHdrH = 18;
+    // safeHdrTop = safeHdrY + safeHdrH ≈ 472, status label starts at 480 → 8px gap
 
-    NSScrollView *scroll = [[NSScrollView alloc]
-        initWithFrame:NSMakeRect(M, tableBottom, innerW, tableH)];
-    [scroll setDocumentView:tv];
-    [scroll setHasVerticalScroller:YES];
-    [scroll setBorderType:NSBezelBorder];
-    [content addSubview:scroll];
-    [scroll release];
-    [tv release]; // retained by scroll
+    // -- Section headers --
+    NSString *safeHdrText = [NSString stringWithFormat:
+        @"New and Updated Entries (%ld)", (long)[safeEntries count]];
+    NSTextField *safeHdrLabel = [NSTextField labelWithString:safeHdrText];
+    safeHdrLabel.frame = NSMakeRect(M, safeHdrY, innerW, safeHdrH);
+    [safeHdrLabel setFont:[NSFont boldSystemFontOfSize:[NSFont smallSystemFontSize]]];
+    [content addSubview:safeHdrLabel];
 
-    [win makeFirstResponder:tv];
+    NSString *conflictHdrText = [NSString stringWithFormat:
+        @"Conflicts (%ld) — Replaces an existing binding", (long)[conflictEntries count]];
+    NSTextField *conflictHdrLabel = [NSTextField labelWithString:conflictHdrText];
+    conflictHdrLabel.frame = NSMakeRect(M, conflictHdrY, innerW, conflictHdrH);
+    [conflictHdrLabel setFont:[NSFont boldSystemFontOfSize:[NSFont smallSystemFontSize]]];
+    [content addSubview:conflictHdrLabel];
+
+    // ---- Helper to build one checkbox table column ----
+    // Used twice (safe and conflict).  Returns the configured column; caller adds to tv.
+#define MAKE_CHECKBOX_COLUMN(identifier) ({ \
+    NSTableColumn *_col = [[NSTableColumn alloc] initWithIdentifier:(identifier)]; \
+    [_col setWidth:innerW - 4]; \
+    [_col setEditable:YES]; \
+    NSButtonCell *_proto = [[NSButtonCell alloc] init]; \
+    [_proto setButtonType:NSSwitchButton]; \
+    [_proto setImagePosition:NSImageLeft]; \
+    [_proto setControlSize:NSControlSizeRegular]; \
+    [_proto setFont:[NSFont systemFontOfSize:[NSFont systemFontSize]]]; \
+    [_col setDataCell:_proto]; \
+    [_proto release]; \
+    _col; \
+})
+
+    // -- Safe table --
+    MergeTableView *safeTV = [[MergeTableView alloc]
+        initWithFrame:NSMakeRect(0, 0, innerW, safeTableH)];
+    [safeTV setHeaderView:nil];
+    [safeTV setUsesAlternatingRowBackgroundColors:YES];
+    [safeTV setAllowsMultipleSelection:NO];
+    [safeTV setFocusRingType:NSFocusRingTypeExterior];
+    [safeTV setAccessibilityLabel:safeHdrText]; // matches the visible section heading
+    NSTableColumn *safeCol = MAKE_CHECKBOX_COLUMN(@"safeEntry");
+    [safeTV addTableColumn:safeCol];
+    [safeCol release];
+
+    MergeTableController *safeController = [[MergeTableController alloc] init];
+    safeController.entries   = safeEntries;
+    safeController.tableView = safeTV;
+    [safeTV setDataSource:safeController];
+    [safeTV setDelegate:safeController];
+    coord.safeTableView = safeTV;
+
+    NSScrollView *safeScroll = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(M, safeTableBottom, innerW, safeTableH)];
+    [safeScroll setDocumentView:safeTV];
+    [safeScroll setHasVerticalScroller:YES];
+    [[safeScroll verticalScroller] setRefusesFirstResponder:YES];
+    [safeScroll setBorderType:NSBezelBorder];
+    [content addSubview:safeScroll];
+    [safeScroll release];
+    [safeTV release]; // retained by safeScroll
+
+    // -- Conflict table --
+    MergeTableView *conflictTV = [[MergeTableView alloc]
+        initWithFrame:NSMakeRect(0, 0, innerW, conflictTableH)];
+    [conflictTV setHeaderView:nil];
+    [conflictTV setUsesAlternatingRowBackgroundColors:YES];
+    [conflictTV setAllowsMultipleSelection:NO];
+    [conflictTV setFocusRingType:NSFocusRingTypeExterior];
+    [conflictTV setAccessibilityLabel:conflictHdrText]; // matches the visible section heading
+    NSTableColumn *conflictCol = MAKE_CHECKBOX_COLUMN(@"conflictEntry");
+    [conflictTV addTableColumn:conflictCol];
+    [conflictCol release];
+
+    MergeTableController *conflictController = [[MergeTableController alloc] init];
+    conflictController.entries   = conflictEntries;
+    conflictController.tableView = conflictTV;
+    [conflictTV setDataSource:conflictController];
+    [conflictTV setDelegate:conflictController];
+    coord.conflictTableView = conflictTV;
+
+    NSScrollView *conflictScroll = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(M, conflictTableBottom, innerW, conflictTableH)];
+    [conflictScroll setDocumentView:conflictTV];
+    [conflictScroll setHasVerticalScroller:YES];
+    [[conflictScroll verticalScroller] setRefusesFirstResponder:YES];
+    [conflictScroll setBorderType:NSBezelBorder];
+    [content addSubview:conflictScroll];
+    [conflictScroll release];
+    [conflictTV release]; // retained by conflictScroll
+
+#undef MAKE_CHECKBOX_COLUMN
+
+    // Wire the key-view loop so Tab/Shift-Tab cycle through both tables then
+    // through the buttons and back.  Must be done after all views are created.
+    // safeTV → conflictTV → cancelBtn → backBtn → deselectBtn → selectBtn
+    //        → continueBtn → safeTV
+    safeTV.nextKeyView      = conflictTV;
+    conflictTV.nextKeyView  = cancelBtn;
+    cancelBtn.nextKeyView   = backBtn;
+    backBtn.nextKeyView     = deselectBtn;
+    deselectBtn.nextKeyView = selectBtn;
+    selectBtn.nextKeyView   = continueBtn;
+    continueBtn.nextKeyView = safeTV;
+
+    // Focus the conflict table if it has entries (those need attention);
+    // otherwise focus the safe table.
+    if ([conflictEntries count] > 0)
+        [win makeFirstResponder:conflictTV];
+    else
+        [win makeFirstResponder:safeTV];
 
     // Run the modal event loop.
     // runModalForWindow: is correct here; mac_browse_for_folder uses the same
@@ -428,9 +546,10 @@ static MergeDialogAction mac_run_keymap_merge_panel(
 
     [win setDelegate:nil]; // clear before releasing coord to avoid dangling pointer
     [win close];
-    [controller release];
+    [safeController     release];
+    [conflictController release];
     [coord release];
-    [win release];
+    [win  release];
 
     if (resp == NSModalResponseOK)   return MergeDialogAction::Continue;
     if (resp == 2)                   return MergeDialogAction::Cancel;
@@ -448,34 +567,81 @@ static MergeDialogAction mac_run_keymap_merge_panel(
 void mac_schedule_merge_dialog(HWND hwnd,
     const std::vector<std::string>& itemIds,
     const std::vector<std::string>& descriptions,
+    const std::vector<std::vector<std::string>>& impliedIds,
+    const std::vector<bool>& defaultSelected,
     const std::string& statusText)
 {
-    // Build the entry array (all unchecked by default).
-    NSMutableArray<MergeEntry *> *entries = [NSMutableArray array];
+    // Split entries into two tables:
+    //   safeEntries     — Add/Update (defaultSelected=true,  pre-checked)
+    //   conflictEntries — Replace    (defaultSelected=false, unchecked)
+    NSMutableArray<MergeEntry *> *safeEntries     = [NSMutableArray array];
+    NSMutableArray<MergeEntry *> *conflictEntries = [NSMutableArray array];
+
     for (size_t i = 0; i < itemIds.size() && i < descriptions.size(); ++i)
     {
         MergeEntry *e = [[[MergeEntry alloc] init] autorelease];
         e.label    = [NSString stringWithUTF8String:descriptions[i].c_str()];
         e.uniqueId = [NSString stringWithUTF8String:itemIds[i].c_str()];
-        e.selected = NO;
-        [entries addObject:e];
+        bool isSafe = (i < defaultSelected.size() && defaultSelected[i]);
+        e.selected = isSafe ? YES : NO;
+
+        // Convert any companion (implied) entry IDs to an NSArray.
+        if (i < impliedIds.size() && !impliedIds[i].empty())
+        {
+            NSMutableArray<NSString *> *arr =
+                [NSMutableArray arrayWithCapacity:impliedIds[i].size()];
+            for (const auto& s : impliedIds[i])
+                [arr addObject:[NSString stringWithUTF8String:s.c_str()]];
+            e.impliedIds = arr;
+        }
+        else
+        {
+            e.impliedIds = @[];
+        }
+
+        if (isSafe)
+            [safeEntries addObject:e];
+        else
+            [conflictEntries addObject:e];
     }
     NSString *status = [NSString stringWithUTF8String:statusText.c_str()];
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        MergeDialogAction action = mac_run_keymap_merge_panel(entries, status);
+        MergeDialogAction action =
+            mac_run_keymap_merge_panel(safeEntries, conflictEntries, status);
 
         switch (action)
         {
             case MergeDialogAction::Continue:
                 if (g_installer)
                 {
-                    // Write the checked entry IDs to installer state.
-                    g_installer->GetState().selectedMergeEntryIds.clear();
-                    for (MergeEntry *e in entries)
-                        if (e.selected)
-                            g_installer->GetState().selectedMergeEntryIds
-                                .push_back([e.uniqueId UTF8String]);
+                    // Collect checked IDs from both tables.
+                    // For entries that imply companion IDs (e.g. a KEY row that
+                    // covers a suppressed ACT entry), include those too.
+                    // Use a set to prevent duplicates when multiple KEY entries
+                    // share the same companion ACT/SCR action definition.
+                    auto& selectedIds =
+                        g_installer->GetState().selectedMergeEntryIds;
+                    selectedIds.clear();
+                    std::set<std::string> addedIds;
+
+                    for (NSArray<MergeEntry *> *arr in
+                            @[safeEntries, conflictEntries])
+                    {
+                        for (MergeEntry *e in arr)
+                        {
+                            if (!e.selected) continue;
+                            std::string uid = [e.uniqueId UTF8String];
+                            if (addedIds.insert(uid).second)
+                                selectedIds.push_back(uid);
+                            for (NSString *implied in e.impliedIds)
+                            {
+                                std::string impliedStr = [implied UTF8String];
+                                if (addedIds.insert(impliedStr).second)
+                                    selectedIds.push_back(impliedStr);
+                            }
+                        }
+                    }
                     g_installer->PerformInstallation();
                     g_installer->ShowScreen(IDD_COMPLETION);
                 }

@@ -69,12 +69,15 @@ std::string KeyBinding::toString() const {
     }
     
     oss << " " << static_cast<int>(m_context);
-    
-    // Add comment if present
+
+    // Add comment: preserve the original (which already contains its leading whitespace),
+    // or auto-generate a descriptive one for programmatically-created entries.
     if (!m_comment.empty()) {
-        oss << "\t\t" << m_comment;
+        oss << m_comment;
+    } else {
+        oss << "\t\t # " << getDescription();
     }
-    
+
     return oss.str();
 }
 
@@ -116,26 +119,19 @@ std::string KeyBinding::getModifierString() const {
     if (m_keyType != KeyType::REGULAR_KEY) {
         return ""; // MIDI and special keys handle modifiers differently
     }
-    
+
+    // Modifier bits (same for both odd and even modifier values):
+    //   bit 2 (0x04) = Shift
+    //   bit 3 (0x08) = Ctrl  (Cmd on macOS)
+    //   bit 4 (0x10) = Alt   (Option on macOS)
+    //   bit 5 (0x20) = Win   (Ctrl on macOS)
+    // Bit 0 is the "regular key" indicator and carries no modifier meaning.
     std::vector<std::string> modifiers;
-    
-    bool isOddModifier = (m_modifierValue % 2) == 1;
-    
-    if (isOddModifier) {
-        // Odd modifier values include the modifier in the key value
-        // This is complex - simplified for now
-        if (m_modifierValue & 1) modifiers.push_back("Shift");
-        if (m_modifierValue & 2) modifiers.push_back("Ctrl");
-        if (m_modifierValue & 4) modifiers.push_back("Alt");
-        if (m_modifierValue & 8) modifiers.push_back("Win");
-    } else {
-        // Even modifier values
-        if (m_modifierValue & 4) modifiers.push_back("Shift");
-        if (m_modifierValue & 8) modifiers.push_back("Ctrl");
-        if (m_modifierValue & 16) modifiers.push_back("Alt");
-        if (m_modifierValue & 32) modifiers.push_back("Win");
-    }
-    
+    if (m_modifierValue & 4)  modifiers.push_back("Shift");
+    if (m_modifierValue & 8)  modifiers.push_back("Ctrl");
+    if (m_modifierValue & 16) modifiers.push_back("Alt");
+    if (m_modifierValue & 32) modifiers.push_back("Win");
+
     std::string result;
     for (size_t i = 0; i < modifiers.size(); ++i) {
         if (i > 0) result += "+";
@@ -348,12 +344,14 @@ std::string CustomAction::toString() const {
     for (const auto& command : m_commandSequence) {
         oss << " " << command;
     }
-    
-    // Add comment if present
+
+    // Add comment: preserve the original, or auto-generate from the description.
     if (!m_comment.empty()) {
-        oss << "\t\t" << m_comment;
+        oss << m_comment;
+    } else {
+        oss << "\t\t # " << getDescription();
     }
-    
+
     return oss.str();
 }
 
@@ -369,14 +367,16 @@ ScriptAction::ScriptAction(ScriptBehavior behavior, Context context, const std::
 
 std::string ScriptAction::toString() const {
     std::ostringstream oss;
-    oss << "SCR " << static_cast<int>(m_behavior) << " " << static_cast<int>(m_context) 
+    oss << "SCR " << static_cast<int>(m_behavior) << " " << static_cast<int>(m_context)
         << " " << m_actionCommandId << " \"" << m_description << "\" " << m_scriptPath;
-    
-    // Add comment if present
+
+    // Add comment: preserve the original, or auto-generate from the description.
     if (!m_comment.empty()) {
-        oss << "\t\t" << m_comment;
+        oss << m_comment;
+    } else {
+        oss << "\t\t # " << getDescription();
     }
-    
+
     return oss.str();
 }
 
@@ -765,6 +765,31 @@ std::vector<KeyBinding*> KeymapParser::findKeyBindingsForAction(const std::strin
     return result;
 }
 
+std::vector<KeyBinding*> KeymapParser::findConflictingKeyBindings() const {
+    // Collect all plain KEY_BINDING entries (not GlobalKeyBindings).
+    std::vector<KeyBinding*> all;
+    for (const auto& entry : m_entries) {
+        if (auto* kb = dynamic_cast<KeyBinding*>(entry.get()))
+            all.push_back(kb);
+    }
+
+    // Mark every binding that shares (modifier, key, context) with another.
+    std::vector<KeyBinding*> result;
+    for (size_t i = 0; i < all.size(); ++i) {
+        for (size_t j = i + 1; j < all.size(); ++j) {
+            if (all[i]->hasSameKeyCombo(*all[j]) &&
+                all[i]->getContext() == all[j]->getContext()) {
+                // Add both if not already present.
+                if (std::find(result.begin(), result.end(), all[i]) == result.end())
+                    result.push_back(all[i]);
+                if (std::find(result.begin(), result.end(), all[j]) == result.end())
+                    result.push_back(all[j]);
+            }
+        }
+    }
+    return result;
+}
+
 // ============================================================================
 // Modification Methods
 // ============================================================================
@@ -994,6 +1019,48 @@ void KeymapParser::validateUniqueIds() {
         }
     }
 }
+
+// ============================================================================
+// KeymapUtils Implementation
+// ============================================================================
+
+namespace KeymapUtils {
+
+std::string contextToDisplayName(Context context) {
+    switch (context) {
+        case Context::MAIN:                return "Main";
+        case Context::MAIN_ALT_RECORDING:  return "Main (alt recording)";
+        case Context::MIDI_EDITOR:         return "MIDI Editor";
+        case Context::MIDI_EVENT_LIST:     return "MIDI Event List";
+        case Context::MIDI_INLINE_EDITOR:  return "MIDI Inline Editor";
+        case Context::MEDIA_EXPLORER:      return "Media Explorer";
+        case Context::GLOBAL_MAIN:         return "Global Main";
+        case Context::GLOBAL_MAIN_ALT:     return "Global Main (alt)";
+        default:                           return "Unknown";
+    }
+}
+
+Context displayNameToContext(const std::string& displayName) {
+    if (displayName == "Main")                   return Context::MAIN;
+    if (displayName == "Main (alt recording)")   return Context::MAIN_ALT_RECORDING;
+    if (displayName == "MIDI Editor")            return Context::MIDI_EDITOR;
+    if (displayName == "MIDI Event List")        return Context::MIDI_EVENT_LIST;
+    if (displayName == "MIDI Inline Editor")     return Context::MIDI_INLINE_EDITOR;
+    if (displayName == "Media Explorer")         return Context::MEDIA_EXPLORER;
+    if (displayName == "Global Main")            return Context::GLOBAL_MAIN;
+    if (displayName == "Global Main (alt)")      return Context::GLOBAL_MAIN_ALT;
+    return Context::UNKNOWN_CONTEXT;
+}
+
+bool isValidActionCommandId(const std::string& id) {
+    if (id.empty()) return false;
+    if (std::all_of(id.begin(), id.end(), ::isdigit)) return true;
+    return std::all_of(id.begin(), id.end(), [](char c) {
+        return std::isalnum(c) || c == '_';
+    });
+}
+
+} // namespace KeymapUtils
 
 // ============================================================================
 // EntryFactory Implementation

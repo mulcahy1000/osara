@@ -100,7 +100,7 @@ CAPTION "Merge OSARA Keymap"
 FONT 8, "MS Sans Serif"
 BEGIN
     LTEXT "Select entries to add to your keymap:", IDC_STATIC, 20, 15, 360, 15
-    LTEXT "New entries are prefixed [New]. Entries that conflict with your existing binding are prefixed [Conflict].", IDC_STATIC, 20, 30, 360, 30
+    LTEXT "Add/Update entries are pre-checked.  Replace entries overwrite an existing binding — uncheck any you want to keep.", IDC_STATIC, 20, 30, 360, 30
     LTEXT "", IDC_MERGE_STATUS, 20, 62, 360, 12
     LISTBOX IDC_MERGE_LIST, 20, 77, 360, 185, LBS_EXTENDEDSEL | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
     LTEXT "Space to select/deselect. No selection = no changes to your keymap.", IDC_STATIC, 20, 267, 360, 15

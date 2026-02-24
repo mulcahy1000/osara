@@ -1,5 +1,7 @@
 #include "KeymapMerger.h"
+#include <algorithm>
 #include <sstream>
+#include <set>
 
 namespace KeymapMerger {
 
@@ -20,6 +22,45 @@ static bool isKeyDisable(const KeymapParser::KeymapEntry* entry)
 {
     auto* kb = dynamic_cast<const KeymapParser::KeyBinding*>(entry);
     return kb && kb->getActionCommandId() == "0";
+}
+
+// Returns a human-readable display name for a keymap entry.
+// KEY lines have no description field; their comment (e.g.
+// "# Main : R : OVERRIDE DEFAULT : Transport: Toggle repeat") is the only
+// human-readable label.  Prefer the comment text over getDescription(), which
+// for KeyBinding returns something like "Shift+R -> 40332".
+static std::string entryDisplayName(const KeymapParser::KeymapEntry* entry)
+{
+    const std::string& comment = entry->getComment();
+    if (!comment.empty())
+    {
+        size_t hashPos = comment.find('#');
+        if (hashPos != std::string::npos)
+        {
+            // Skip "# " to reach the descriptive text.
+            size_t textStart = hashPos + 1;
+            while (textStart < comment.size() && comment[textStart] == ' ')
+                ++textStart;
+            if (textStart < comment.size())
+                return comment.substr(textStart);
+        }
+    }
+    // For KEY entries without a comment: REAPER assigns pure-number action IDs
+    // (e.g. 40525) to built-in actions.  Those numbers are meaningless to users.
+    // Return just the key combo string instead so "currently: -" is shown
+    // rather than the cryptic "currently: - -> 40525".
+    // Named action IDs (e.g. OSARA_REPORTRIPPLE) are kept because they are readable.
+    auto* kb = dynamic_cast<const KeymapParser::KeyBinding*>(entry);
+    if (kb)
+    {
+        const std::string& actionId = kb->getActionCommandId();
+        bool isPureNumber = !actionId.empty() &&
+            std::all_of(actionId.begin(), actionId.end(),
+                        [](unsigned char c){ return std::isdigit(c); });
+        if (isPureNumber)
+            return kb->getKeyComboString();
+    }
+    return entry->getDescription();
 }
 
 // Strip trailing comments from a serialised entry string before comparing.
@@ -77,35 +118,91 @@ KeymapMerger::analyzeConflicts(const KeymapParser::KeymapParser& userKeymap,
         {
             // New entry – not present in user keymap at all.
             ConflictInfo info;
-            info.type        = ConflictInfo::ConflictType::DUPLICATE_ACTION_COMMAND_ID;
-            info.osaraEntry  = const_cast<KeymapParser::KeymapEntry*>(osaraEntry.get());
-            info.description = "New: " + osaraEntry->getDescription();
-            info.resolved    = false;
+            info.type            = ConflictInfo::ConflictType::DUPLICATE_ACTION_COMMAND_ID;
+            info.osaraEntry      = const_cast<KeymapParser::KeymapEntry*>(osaraEntry.get());
+            info.description     = "Add: " + entryDisplayName(osaraEntry.get());
+            info.resolved        = false;
+            info.defaultSelected = true; // safe to add by default
             result.push_back(std::move(info));
         }
         else if (stripEntryComment(userMatch->toString()) != stripEntryComment(osaraEntry->toString()))
         {
-            // Conflict – same key/action ID but different content.
+            // Same unique ID but different content.
             ConflictInfo info;
-            info.type      = ConflictInfo::ConflictType::DUPLICATE_KEY_BINDING;
-            info.userEntry = const_cast<KeymapParser::KeymapEntry*>(userMatch);
+            info.type       = ConflictInfo::ConflictType::DUPLICATE_KEY_BINDING;
+            info.userEntry  = const_cast<KeymapParser::KeymapEntry*>(userMatch);
             info.osaraEntry = const_cast<KeymapParser::KeymapEntry*>(osaraEntry.get());
-            // When both sides have the same human-readable description the
-            // difference is internal (e.g. a custom action's step sequence
-            // changed). Show "Updated:" so the user doesn't see the confusing
-            // "X (currently: X)" pattern.
-            const std::string osaraDesc = osaraEntry->getDescription();
-            const std::string userDesc  = userMatch->getDescription();
-            if (osaraDesc == userDesc)
-                info.description = "Updated: " + osaraDesc;
+            info.resolved   = false;
+
+            const std::string osaraLabel = entryDisplayName(osaraEntry.get());
+            const std::string userLabel  = entryDisplayName(userMatch);
+            if (osaraLabel == userLabel)
+            {
+                // Same human-readable description: the difference is internal
+                // (e.g. a custom action's command sequence changed).
+                // Pre-check these — the user would almost always want the update.
+                info.description     = "Update: " + osaraLabel;
+                info.defaultSelected = true;
+            }
             else
-                info.description = "Conflict: " + osaraDesc
-                                 + "  (currently: " + userDesc + ")";
-            info.resolved    = false;
+            {
+                // Different descriptions: OSARA wants to bind this key/action
+                // to something the user currently has set differently.
+                // Leave unchecked so the user must explicitly decide.
+                info.description     = "Replace: " + osaraLabel
+                                     + "  (currently: " + userLabel + ")";
+                info.defaultSelected = false;
+            }
             result.push_back(std::move(info));
         }
         // Identical entries are silently skipped – nothing to offer the user.
     }
+
+    // Post-processing: suppress ACT/SCR entries that are implied by a KEY entry
+    // already in the result.  Custom actions in OSARA are always paired with a
+    // KEY binding that assigns them a keyboard shortcut.  Showing both rows is
+    // confusing to users because (a) the KEY description is more informative
+    // (it includes the key combo), and (b) it looks like two separate changes
+    // when it is really one.  Instead, store the ACT UID in the KEY entry's
+    // impliedEntryIds so the merger can install both automatically when the
+    // user selects the KEY row.
+
+    // Build a set of all ACT/SCR UIDs currently in the result.
+    std::set<std::string> actUidsInResult;
+    for (const auto& info : result)
+    {
+        if (!info.osaraEntry) continue;
+        const std::string& uid = info.osaraEntry->getUniqueId();
+        // KEY entries have UIDs of the form "KEY_<mod>_<key>_<ctx>".
+        if (uid.rfind("KEY_", 0) != 0)
+            actUidsInResult.insert(uid);
+    }
+
+    // For each KEY entry whose action GUID also appears as a result entry,
+    // link them and mark the ACT for suppression.
+    std::set<std::string> suppressedActUids;
+    for (auto& info : result)
+    {
+        if (!info.osaraEntry) continue;
+        auto* kb = dynamic_cast<KeymapParser::KeyBinding*>(info.osaraEntry);
+        if (!kb) continue;
+        const std::string& actionId = kb->getActionCommandId();
+        if (actUidsInResult.count(actionId))
+        {
+            info.impliedEntryIds.push_back(actionId);
+            suppressedActUids.insert(actionId);
+        }
+    }
+
+    // Remove suppressed ACT/SCR entries.
+    result.erase(
+        std::remove_if(result.begin(), result.end(),
+            [&](const ConflictInfo& info)
+            {
+                return info.osaraEntry &&
+                       suppressedActUids.count(info.osaraEntry->getUniqueId());
+            }),
+        result.end());
 
     return result;
 }
@@ -159,29 +256,18 @@ KeymapMerger::mergeSpecificEntries(const KeymapParser::KeymapParser& userKeymap,
         result.removals.push_back(id);
     }
 
-    // Append the selected OSARA entries.
+    // Build the final merged content: user entries (minus removed conflicts)
+    // followed by the selected OSARA entries, then re-parse the whole thing
+    // so that result.mergedKeymap is fully populated.
+    std::string mergedStr = result.mergedKeymap.toString();
+
     for (const auto& id : entriesToMerge)
     {
         for (const auto& entry : osaraKeymap.getEntries())
         {
             if (entry->getUniqueId() == id)
             {
-                // Re-parse the single-entry string into the merged keymap.
-                std::string singleEntry = entry->toString() + "\n";
-                // parseString appends to existing entries when called on an
-                // already-populated parser, so we build a temp parser and
-                // steal its entries instead.
-                KeymapParser::KeymapParser tmp;
-                if (tmp.parseString(singleEntry))
-                {
-                    for (auto& e : tmp.getEntries())
-                    {
-                        // addEntry takes unique_ptr; since getEntries() returns
-                        // const refs we serialise and re-parse one more time.
-                        // This is intentionally kept simple for the installer.
-                        (void)e; // entries already in result.mergedKeymap via addString above
-                    }
-                }
+                mergedStr += entry->toString() + "\n";
                 result.additions.push_back(id);
                 ++result.osaraEntriesAdded;
                 break;
@@ -189,10 +275,7 @@ KeymapMerger::mergeSpecificEntries(const KeymapParser::KeymapParser& userKeymap,
         }
     }
 
-    // Build final merged content as a plain string for WriteToFile callers.
-    // (The mergedKeymap field above may be incomplete due to the append
-    // limitation noted above; callers should use the string-based approach
-    // in InstallKeymap() for reliability.)
+    result.mergedKeymap.parseString(mergedStr);
     result.success = true;
     return result;
 }
